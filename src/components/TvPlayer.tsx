@@ -1,9 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isEligible, isMediaEligible } from "../data";
 import type { TvContent, TvPlaylistItem } from "../types";
+import {
+  DEFAULT_TRANSITION_PRESET,
+  EXIT_ANIMATION_DURATION,
+  PAINT_SWIPE_COVER_DURATION,
+  PAINT_SWIPE_REVEAL_DURATION,
+  getExitPresetForItem,
+  getTransitionClasses,
+  type ExitPreset,
+  type TransitionPreset,
+} from "../transitions";
 import { ImageSlide } from "./ImageSlide";
 import { OfferSlide, OpeningSlide } from "./OfferSlide";
 import { VideoSlide } from "./VideoSlide";
+import { PaintSwipeOverlay } from "./PaintSwipeOverlay";
+import { BlackFridayDecorations } from "./BlackFridayDecorations";
+import type { ThemeDefinition } from "../themes/types";
+import { toThemeStyle } from "../themes/toThemeStyle";
+import type { OfferLayout } from "../offers/layouts";
+import type { MotionConfig } from "../motion/types";
+import { loadActiveMotionConfig } from "../motion/storage";
 
 export type TvPlayerProps = {
   content: TvContent;
@@ -11,6 +28,10 @@ export type TvPlayerProps = {
   connection?: "online" | "syncing" | "offline";
   lastSync?: Date | null;
   sectorLabel?: string;
+  transitionPreset?: TransitionPreset;
+  theme: ThemeDefinition;
+  layoutOverride?: OfferLayout;
+  motionConfig?: MotionConfig;
 };
 
 export function TvPlayer({
@@ -19,35 +40,176 @@ export function TvPlayer({
   connection = "online",
   lastSync = null,
   sectorLabel,
+  transitionPreset,
+  theme,
+  layoutOverride,
+  motionConfig,
 }: TvPlayerProps) {
   const [index, setIndex] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [paused, setPaused] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState("");
+  const [isExiting, setIsExiting] = useState(false);
+  const [paintPhase, setPaintPhase] = useState<"idle" | "covering" | "revealing">("idle");
+  const exitTimerRef = useRef<number | null>(null);
+  const paintRevealTimerRef = useRef<number | null>(null);
   const shell = useRef<HTMLDivElement>(null);
   const preloadedUrlsRef = useRef<Set<string>>(new Set());
 
-  // Filter active and eligible offers and media
-  const eligibleOffers = content.offers.filter((o) => isEligible(o));
-  const eligibleMedia = content.media.filter((m) => isMediaEligible(m));
+  // Resolve motion configuration (from props or local persistence)
+  const activeMotion = useMemo(() => {
+    if (motionConfig) return motionConfig;
+    if (typeof window !== "undefined") {
+      try {
+        return loadActiveMotionConfig();
+      } catch {}
+    }
+    return null;
+  }, [motionConfig]);
 
-  // Filter playlist items whose underlying offer/media is eligible
-  const playlist: TvPlaylistItem[] = content.playlist.filter((item) => {
-    if (!item.active) return false;
-    if (item.kind === "offer") {
-      return eligibleOffers.some((o) => o.id === item.offer.id);
+  // Theme resolution overlayed with active motion tokens
+  const effectiveTheme = useMemo(() => {
+    if (!activeMotion) return theme;
+    return {
+      ...theme,
+      tokens: {
+        ...theme.tokens,
+        badge: {
+          ...theme.tokens.badge,
+          label: activeMotion.badge.text || theme.tokens.badge.label,
+          background: activeMotion.badge.background || theme.tokens.badge.background,
+        },
+      },
+    };
+  }, [theme, activeMotion]);
+
+  const motionStyleOverrides = useMemo(() => {
+    if (!activeMotion) return {};
+    const styles: Record<string, string> = {
+      "--lab-speed-scale": `${1 / (activeMotion.speed || 1)}`,
+      "--lab-logo-size": `${activeMotion.logo.size}px`,
+      "--lab-sector-text-size": `${activeMotion.logo.sectorTextSize}px`,
+      "--lab-badge-rotation": `${activeMotion.badge.rotation}deg`,
+      "--lab-ambient-speed": `${activeMotion.ambient.speed}s`,
+      "--lab-ambient-opacity": `${activeMotion.ambient.opacity / 100}`,
+      "--lab-shimmer-display": activeMotion.pricePhysics.shimmer ? "block" : "none",
+    };
+
+    if (activeMotion.logo.sectorTextColor) {
+      styles["--lab-sector-text-color"] = activeMotion.logo.sectorTextColor;
     }
-    if (item.kind === "image" || item.kind === "video") {
-      return eligibleMedia.some((m) => m.id === item.id);
+
+    // Theme slug of current effective theme
+    const isThemeBlackFriday = effectiveTheme.slug === "black-friday";
+
+    // Custom Color Overrides (Only injected if explicitly enabled by user)
+    if (activeMotion.colorOverrides?.enabled) {
+      const co = activeMotion.colorOverrides;
+      if (co.background) {
+        styles["--bf-custom-bg"] = co.background;
+        styles["--lab-custom-bg"] = co.background;
+      }
+      if (co.productName) styles["--bf-custom-name-color"] = co.productName;
+      if (co.price) styles["--bf-custom-price-color"] = co.price;
+      if (co.currency) styles["--bf-custom-currency-color"] = co.currency;
+      if (co.unit) styles["--bf-custom-unit-color"] = co.unit;
+      if (co.oldPrice) styles["--bf-custom-oldprice-color"] = co.oldPrice;
+      if (co.strikeColor) styles["--bf-custom-strike-color"] = co.strikeColor;
+      if (co.capsuleBg) styles["--bf-custom-capsule-bg"] = co.capsuleBg;
+      if (co.capsuleText) styles["--bf-custom-capsule-text"] = co.capsuleText;
+      if (co.sectorText) {
+        styles["--bf-custom-sector-color"] = co.sectorText;
+        styles["--lab-sector-text-color"] = co.sectorText;
+      }
+      if (co.badgeBg) styles["--bf-custom-badge-bg"] = co.badgeBg;
+      if (co.badgeText) styles["--bf-custom-badge-text"] = co.badgeText;
+    } else if (activeMotion.background && !isThemeBlackFriday) {
+      // General background override (only if not Black Friday default or explicitly modified)
+      if (activeMotion.background.type === "image" && activeMotion.background.imageUrl) {
+        styles["--lab-custom-bg-image"] = `url(${activeMotion.background.imageUrl})`;
+      } else if (
+        activeMotion.themeSlug !== "black-friday" &&
+        activeMotion.background.type === "solid" &&
+        activeMotion.background.color
+      ) {
+        styles["--lab-custom-bg"] = activeMotion.background.color;
+      } else if (
+        activeMotion.themeSlug !== "black-friday" &&
+        activeMotion.background.type === "gradient"
+      ) {
+        styles["--lab-custom-bg"] = `linear-gradient(${activeMotion.background.gradientAngle || 135}deg, ${activeMotion.background.gradientStart || "#1a0407"}, ${activeMotion.background.gradientEnd || "#050608"})`;
+      }
     }
-    return true;
-  });
+
+    return styles as React.CSSProperties;
+  }, [activeMotion, effectiveTheme]);
+
+  const motionClassNames = useMemo(() => {
+    if (!activeMotion) return "";
+    const cardStyle = activeMotion.productCard?.style || "transparent";
+    const nameAnim = activeMotion.elementAnimations?.nameAnimation || "slide-up";
+    const priceAnim = activeMotion.elementAnimations?.priceAnimation || "impact";
+    const imgAnim = activeMotion.elementAnimations?.imageAnimation || "float";
+    const choreo = activeMotion.elementAnimations?.choreography || "staggered";
+
+    return `lab-pos-${activeMotion.logo.position} lab-sector-${activeMotion.logo.sectorLayout} lab-impact-${activeMotion.pricePhysics.impact} lab-card-${cardStyle} anim-name-${nameAnim} anim-price-${priceAnim} anim-image-${imgAnim} choreo-${choreo}`;
+  }, [activeMotion]);
+
+  const themeStyle = useMemo(() => toThemeStyle(effectiveTheme), [effectiveTheme]);
+  const activeTransitionPreset =
+    transitionPreset || effectiveTheme.tokens.transitionPreset || DEFAULT_TRANSITION_PRESET;
+
+  // Filter active and eligible offers and media (memoized for referential stability)
+  const eligibleOffers = useMemo(
+    () => content.offers.filter((o) => isEligible(o)),
+    [content.offers],
+  );
+  const eligibleMedia = useMemo(
+    () => content.media.filter((m) => isMediaEligible(m)),
+    [content.media],
+  );
+
+  // Filter playlist items whose underlying offer/media/composition is active and eligible
+  const playlist: TvPlaylistItem[] = useMemo(() => {
+    return content.playlist.filter((item) => {
+      if (!item.active) return false;
+      if (item.kind === "offer") {
+        return eligibleOffers.some((o) => o.id === item.offer.id);
+      }
+      if (item.kind === "composition") {
+        return (
+          item.composition.active &&
+          item.composition.offers.length > 0 &&
+          item.composition.offers.some((o) => isEligible(o))
+        );
+      }
+      if (item.kind === "image" || item.kind === "video") {
+        return eligibleMedia.some((m) => m.id === item.id);
+      }
+      return true;
+    });
+  }, [content.playlist, eligibleOffers, eligibleMedia]);
 
   const safeIndex = playlist.length ? index % playlist.length : 0;
   const currentItem = playlist[safeIndex];
   const isVideo = currentItem?.kind === "video";
   const duration = Math.max(2, Number(currentItem?.duration) || 8) * 1000;
+  const currentExitPreset: ExitPreset =
+    (activeMotion?.exitPreset as ExitPreset) || getExitPresetForItem(currentItem?.kind);
+
+  const isPaintSwipe =
+    currentExitPreset === "paint-swipe" || currentExitPreset === "paint-swipe-right";
+
+  const paintSpeed = activeMotion?.paintSwipe?.speed || "normal";
+  const paintCoverDuration =
+    paintSpeed === "fast" ? 300 : paintSpeed === "smooth" ? 550 : PAINT_SWIPE_COVER_DURATION;
+  const paintRevealDuration =
+    paintSpeed === "fast" ? 300 : paintSpeed === "smooth" ? 550 : PAINT_SWIPE_REVEAL_DURATION;
+
+  const currentExitDuration = isPaintSwipe ? paintCoverDuration : EXIT_ANIMATION_DURATION;
+
+  const prevItemIdRef = useRef<string | undefined>(currentItem?.id);
 
   // Preload the next item to prevent black screens (without redundant requests)
   useEffect(() => {
@@ -61,7 +223,9 @@ export function TvPlayer({
         ? nextItem.src
         : nextItem.kind === "offer"
           ? nextItem.offer.image
-          : null;
+          : nextItem.kind === "composition"
+            ? nextItem.composition.offers[0]?.image
+            : null;
 
     if (urlToPreload && !preloadedUrlsRef.current.has(urlToPreload)) {
       preloadedUrlsRef.current.add(urlToPreload);
@@ -76,14 +240,56 @@ export function TvPlayer({
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (exitTimerRef.current) {
+        window.clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      if (paintRevealTimerRef.current) {
+        window.clearTimeout(paintRevealTimerRef.current);
+        paintRevealTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // When the active item changes (advance, deleted, inactivated), clean up exit timer and reset elapsed
+  useEffect(() => {
+    if (exitTimerRef.current) {
+      window.clearTimeout(exitTimerRef.current);
+      exitTimerRef.current = null;
+    }
     setElapsed(0);
+    setIsExiting(false);
+    prevItemIdRef.current = currentItem?.id;
   }, [currentItem?.id]);
 
+  // Synchronize index when playlist changes:
+  // 1. If currently playing item is still in the playlist, preserve it uninterrupted.
+  // 2. If currently playing item was deleted or inactivated, clamp index safely to next item.
   useEffect(() => {
-    if (playlist.length && index >= playlist.length) {
-      setIndex((current) => current % playlist.length);
+    if (!playlist.length) {
+      setIndex(0);
+      return;
     }
-  }, [index, playlist.length]);
+
+    const currentId = prevItemIdRef.current;
+    if (currentId) {
+      const existingIdx = playlist.findIndex((item) => item.id === currentId);
+      if (existingIdx !== -1) {
+        if (existingIdx !== index) {
+          setIndex(existingIdx);
+        }
+        return;
+      } else {
+        console.log("[SOL TV playlist] item removido por inatividade", currentId);
+      }
+    }
+
+    // The previous item was deleted or inactivated -> safely clamp index
+    if (index >= playlist.length) {
+      setIndex(index % playlist.length);
+    }
+  }, [playlist, index]);
 
   // Timer for non-video slides (or fallback for videos with fixed duration)
   useEffect(() => {
@@ -97,19 +303,70 @@ export function TvPlayer({
     return () => clearInterval(timer);
   }, [paused, currentItem?.id, isVideo]);
 
-  // Auto-advance for timed items (offers & images)
-  useEffect(() => {
-    if (isVideo) return;
-    if (elapsed >= duration) {
-      setIndex((i) => (i + 1) % Math.max(playlist.length, 1));
+  const advanceToNextItem = (isManual = false) => {
+    if (playlist.length <= 1) {
       setElapsed(0);
+      setIsExiting(false);
+      return;
     }
-  }, [elapsed, duration, playlist.length, isVideo]);
+
+    if (exitTimerRef.current) {
+      window.clearTimeout(exitTimerRef.current);
+      exitTimerRef.current = null;
+    }
+    if (paintRevealTimerRef.current) {
+      window.clearTimeout(paintRevealTimerRef.current);
+      paintRevealTimerRef.current = null;
+    }
+
+    setIndex((i) => (i + 1) % playlist.length);
+    setElapsed(0);
+    setIsExiting(false);
+
+    if (isPaintSwipe) {
+      setPaintPhase("revealing");
+      paintRevealTimerRef.current = window.setTimeout(() => {
+        setPaintPhase("idle");
+        paintRevealTimerRef.current = null;
+      }, paintRevealDuration);
+    }
+  };
 
   const advanceNext = () => {
-    setIndex((i) => (i + 1) % Math.max(playlist.length, 1));
-    setElapsed(0);
+    advanceToNextItem(true);
   };
+
+  // Auto-advance and exit trigger for timed items (offers & images)
+  useEffect(() => {
+    if (isVideo || paused || playlist.length <= 1) return;
+
+    // Trigger exit animation smoothly in the last milliseconds of the slide
+    if (
+      !isExiting &&
+      duration > currentExitDuration &&
+      elapsed >= duration - currentExitDuration
+    ) {
+      setIsExiting(true);
+      if (isPaintSwipe) {
+        setPaintPhase("covering");
+      }
+    }
+
+    // Advance when full duration elapses
+    if (elapsed >= duration) {
+      advanceToNextItem(false);
+    }
+  }, [
+    elapsed,
+    duration,
+    playlist.length,
+    isVideo,
+    paused,
+    isExiting,
+    currentExitDuration,
+    isPaintSwipe,
+    paintRevealDuration,
+  ]);
 
   const toggleFullscreen = async () => {
     try {
@@ -135,6 +392,7 @@ export function TvPlayer({
   }, [mode]);
 
   const sectorTitle =
+    activeMotion?.logo.sectorText ||
     sectorLabel ||
     (content.sector === "acougue"
       ? "AÇOUGUE"
@@ -144,15 +402,44 @@ export function TvPlayer({
           ? "FRENTE DE CAIXAS"
           : content.sector.toUpperCase());
 
+  const logoImageSrc = activeMotion?.logo.image || "/logo-sol.png";
+
   function renderSlideContent(item: TvPlaylistItem) {
+    if (item.kind === "composition") {
+      return (
+        <OfferSlide
+          key={`comp-${item.id}`}
+          offers={item.composition.offers}
+          layout={layoutOverride || item.composition.layout}
+          paused={paused}
+          badgeLabel={activeMotion?.badge.text || effectiveTheme.tokens.badge.label}
+          badgeType={activeMotion?.badge.type || "text"}
+          badgeImage={activeMotion?.badge.image}
+          badgeSize={activeMotion?.badge.size}
+          badgePosition={activeMotion?.badge.position || "top-right"}
+          badgeOffsetX={activeMotion?.badge.offsetX || 0}
+          badgeOffsetY={activeMotion?.badge.offsetY || 0}
+          cardStyle={activeMotion?.productCard?.style || "transparent"}
+        />
+      );
+    }
+
     if (item.kind === "offer") {
       return (
         <OfferSlide
-          key={item.id}
+          key={`offer-${item.id}`}
           offer={item.offer}
           offers={eligibleOffers}
-          layout={item.offer.layout}
+          layout={layoutOverride || item.offer.layout}
           paused={paused}
+          badgeLabel={activeMotion?.badge.text || effectiveTheme.tokens.badge.label}
+          badgeType={activeMotion?.badge.type || "text"}
+          badgeImage={activeMotion?.badge.image}
+          badgeSize={activeMotion?.badge.size}
+          badgePosition={activeMotion?.badge.position || "top-right"}
+          badgeOffsetX={activeMotion?.badge.offsetX || 0}
+          badgeOffsetY={activeMotion?.badge.offsetY || 0}
+          cardStyle={activeMotion?.productCard?.style || "transparent"}
         />
       );
     }
@@ -160,7 +447,7 @@ export function TvPlayer({
     if (item.kind === "image") {
       return (
         <ImageSlide
-          key={item.id}
+          key={`image-${item.id}`}
           src={item.src}
           title={item.title}
           onError={advanceNext}
@@ -171,7 +458,7 @@ export function TvPlayer({
     if (item.kind === "video") {
       return (
         <VideoSlide
-          key={item.id}
+          key={`video-${item.id}`}
           src={item.src}
           title={item.title}
           paused={paused}
@@ -182,23 +469,41 @@ export function TvPlayer({
     }
 
     if (item.kind === "opening") {
-      return <OpeningSlide key={item.id} sector={sectorTitle} />;
+      return <OpeningSlide key={`opening-${item.id}`} sector={sectorTitle} />;
     }
 
     return null;
   }
 
+  const paintDirection =
+    currentExitPreset === "paint-swipe-right"
+      ? "right-to-left"
+      : (activeMotion?.paintSwipe?.direction || "left-to-right");
+  const paintColorMode = activeMotion?.paintSwipe?.colorMode || "dual";
+
   if (mode === "tv") {
     return (
       <div
-        className="tv-shell"
+        className={`tv-shell ${motionClassNames}`}
+        data-theme={effectiveTheme.slug}
+        data-animation-intensity={effectiveTheme.tokens.animationIntensity}
+        style={{ ...themeStyle, ...motionStyleOverrides }}
         ref={shell}
         onDoubleClick={toggleFullscreen}
         title="Dê um duplo clique ou pressione F para tela cheia"
       >
+        <div className="tv-top-brand">
+          <img src={logoImageSrc} alt="Supermercado Sol" className="tv-brand-logo" />
+          <span className="tv-brand-sector-text">{sectorTitle}</span>
+        </div>
         <div className="tv-screen">
           {currentItem ? (
-            renderSlideContent(currentItem)
+            <div
+              key={currentItem.id}
+              className={`tv-screen-content ${getTransitionClasses(activeTransitionPreset, isExiting, currentExitPreset)} ${paintPhase === "revealing" ? "slide-enter-paint-swipe" : ""}`}
+            >
+              {renderSlideContent(currentItem)}
+            </div>
           ) : (
             <div className="empty-state">
               <div>
@@ -208,9 +513,13 @@ export function TvPlayer({
               </div>
             </div>
           )}
-        </div>
-        <div className="tv-logo">
-          SUPERMERCADO SOL • {sectorTitle}
+          <PaintSwipeOverlay
+            phase={paintPhase}
+            direction={paintDirection}
+            colorMode={paintColorMode}
+            speed={paintSpeed}
+          />
+          <BlackFridayDecorations fx={activeMotion?.fx} />
         </div>
         <div
           className="progress"
@@ -259,10 +568,25 @@ export function TvPlayer({
         </div>
       </div>
       {error && <p role="alert">{error}</p>}
-      <div className="tv-shell" ref={shell}>
+      <div
+        className={`tv-shell ${motionClassNames}`}
+        data-theme={effectiveTheme.slug}
+        data-animation-intensity={effectiveTheme.tokens.animationIntensity}
+        style={{ ...themeStyle, ...motionStyleOverrides }}
+        ref={shell}
+      >
+        <div className="tv-top-brand">
+          <img src={logoImageSrc} alt="Supermercado Sol" className="tv-brand-logo" />
+          <span className="tv-brand-sector-text">{sectorTitle}</span>
+        </div>
         <div className="tv-screen">
           {currentItem ? (
-            renderSlideContent(currentItem)
+            <div
+              key={currentItem.id}
+              className={`tv-screen-content ${getTransitionClasses(activeTransitionPreset, isExiting, currentExitPreset)} ${paintPhase === "revealing" ? "slide-enter-paint-swipe" : ""}`}
+            >
+              {renderSlideContent(currentItem)}
+            </div>
           ) : (
             <div className="empty-state">
               <div>
@@ -274,9 +598,13 @@ export function TvPlayer({
               </div>
             </div>
           )}
-        </div>
-        <div className="tv-logo">
-          SUPERMERCADO SOL • {sectorTitle}
+          <PaintSwipeOverlay
+            phase={paintPhase}
+            direction={paintDirection}
+            colorMode={paintColorMode}
+            speed={paintSpeed}
+          />
+          <BlackFridayDecorations fx={activeMotion?.fx} />
         </div>
         <div
           className="progress"

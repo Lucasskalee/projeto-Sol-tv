@@ -1,4 +1,9 @@
 import type { Offer, PlaylistItem, SolTvMedia, TvContent, TvPlaylistItem } from "./types";
+import {
+  buildCompositionPlaylist,
+  synthesizeCompositionsFromOffers,
+  type OfferComposition,
+} from "./offers/compositions";
 
 const today = new Date();
 export const formatDate = (date: Date) =>
@@ -185,24 +190,38 @@ export function contentFromData(params: {
   sector?: string;
   offers?: Offer[];
   media?: SolTvMedia[];
+  compositions?: OfferComposition[];
 }): TvContent {
   const sector = params.sector || "acougue";
   const offers = params.offers || [];
   const media = params.media || [];
-  const playlist = buildUnifiedPlaylist(offers, media);
+  const compositions =
+    params.compositions && params.compositions.length > 0
+      ? params.compositions
+      : synthesizeCompositionsFromOffers(offers);
+
+  const playlist =
+    compositions.length > 0
+      ? buildCompositionPlaylist(compositions, media)
+      : buildUnifiedPlaylist(offers, media);
 
   return {
     sector,
     offers,
     media,
+    compositions,
     playlist,
     publishedAt: new Date().toISOString(),
   };
 }
 
-export function contentFromOffers(offers: Offer[], media: SolTvMedia[] = []): TvContent {
-  const sector = offers[0]?.sector || media[0]?.sector || "acougue";
-  return contentFromData({ sector, offers, media });
+export function contentFromOffers(
+  offers: Offer[],
+  media: SolTvMedia[] = [],
+  compositions: OfferComposition[] = [],
+): TvContent {
+  const sector = offers[0]?.sector || media[0]?.sector || compositions[0]?.sector || "acougue";
+  return contentFromData({ sector, offers, media, compositions });
 }
 
 export function demoContent(sector = "acougue"): TvContent {

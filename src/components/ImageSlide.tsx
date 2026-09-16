@@ -31,7 +31,7 @@ export function ImageSlide({
       <img
         src={src}
         alt={title || "Conteúdo SOL TV"}
-        className="full-media-image"
+        className="full-media-image ken-burns-image"
         onError={handleError}
       />
       {title && (

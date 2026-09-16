@@ -1,4 +1,6 @@
 export type MediaType = "image" | "video";
+export type { TransitionPreset, ExitPreset } from "./transitions";
+import type { LegacyOfferLayout } from "./offers/layouts";
 
 export type Sector = "acougue" | "padaria" | "caixas" | "geral" | string;
 
@@ -32,14 +34,24 @@ export type Offer = {
   duration: number;
   active: boolean;
   displayOrder: number;
-  layout: "single" | "pair" | "grid";
+  layout: LegacyOfferLayout;
 };
+
+import type { OfferComposition } from "./offers/compositions";
 
 export type TvPlaylistItem =
   | {
       id: string;
       kind: "offer";
       offer: Offer;
+      duration: number;
+      position: number;
+      active: boolean;
+    }
+  | {
+      id: string;
+      kind: "composition";
+      composition: OfferComposition;
       duration: number;
       position: number;
       active: boolean;
@@ -93,6 +105,7 @@ export type TvContent = {
   sector: string;
   offers: Offer[];
   media: SolTvMedia[];
+  compositions: OfferComposition[];
   playlist: TvPlaylistItem[];
   publishedAt: string;
 };

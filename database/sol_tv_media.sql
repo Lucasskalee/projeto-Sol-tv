@@ -44,15 +44,22 @@ for each row execute function public.set_sol_tv_media_updated_at();
 -- 4. Habilitar Row Level Security (RLS)
 alter table public.sol_tv_media enable row level security;
 
--- 5. Políticas de Segurança (RLS)
--- TV e Usuários Anônimos: somente leitura de mídias ativas
+-- TV e Usuários Anônimos: leitura de mídias (o filtro de active=true é aplicado na consulta da TV)
+-- Observação importante: a política de SELECT precisa ser 'using (true)' para que o Supabase
+-- Realtime consiga notificar clientes anônimos quando uma mídia for inativada (active = false) ou deletada.
 drop policy if exists "SOL TV public media read" on public.sol_tv_media;
 create policy "SOL TV public media read"
   on public.sol_tv_media for select
   to anon, authenticated
-  using (active = true);
+  using (true);
 
--- Administradores autenticados: permissão completa de gravação
+-- Administradores autenticados: permissão completa de leitura e gravação
+drop policy if exists "SOL TV admin media select" on public.sol_tv_media;
+create policy "SOL TV admin media select"
+  on public.sol_tv_media for select
+  to authenticated
+  using (true);
+
 drop policy if exists "SOL TV admin media insert" on public.sol_tv_media;
 create policy "SOL TV admin media insert"
   on public.sol_tv_media for insert
@@ -73,6 +80,8 @@ create policy "SOL TV admin media delete"
   using (true);
 
 -- 6. Habilitar Realtime para a tabela sol_tv_media
+alter table public.sol_tv_media replica identity full;
+
 do $$
 begin
   if not exists (

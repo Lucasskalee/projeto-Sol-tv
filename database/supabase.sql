@@ -70,6 +70,8 @@ create policy "SOL TV MVP delete"
   to anon, authenticated
   using (sector = 'acougue');
 
+alter table public.sol_tv_offers replica identity full;
+
 do $$
 begin
   if not exists (

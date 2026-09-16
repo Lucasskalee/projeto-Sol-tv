@@ -27,6 +27,10 @@ export function VideoSlide({
         console.warn("Autoplay bloqueado ou falha na reprodução:", err);
       });
     }
+
+    return () => {
+      video.pause();
+    };
   }, [paused, src]);
 
   function handleError() {

@@ -1,136 +1,93 @@
-import { useEffect, useRef, useState } from "react";
 import type { Offer } from "../types";
+import { OFFER_LAYOUTS, normalizeOfferLayout, type LegacyOfferLayout, type OfferLayout } from "../offers/layouts";
+import { OFFER_LAYOUT_COMPONENTS } from "./OfferLayouts";
+import { OfferProduct } from "./OfferProduct";
 
-export function ProductImage({
-  src,
-  name,
-  className = "",
-}: {
-  src: string;
-  name: string;
-  className?: string;
-}) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-
-  return src && !failed ? (
-    <img
-      className={className}
-      src={src}
-      alt={name}
-      onError={() => setFailed(true)}
-    />
-  ) : (
-    <div className={`media-fallback ${className}`}>
-      <span>
-        ☼<small>{name || "SOL TV"}</small>
-      </span>
-    </div>
-  );
-}
-
-export function VideoPlayer({
-  src,
-  paused,
-}: {
-  src: string;
-  paused: boolean;
-}) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (paused) {
-      ref.current?.pause();
-    } else {
-      ref.current?.play().catch(() => setFailed(true));
-    }
-  }, [paused, src]);
-
-  return failed ? (
-    <div className="media-fallback">Vídeo indisponível</div>
-  ) : (
-    <video
-      ref={ref}
-      src={src}
-      autoPlay
-      muted
-      loop
-      playsInline
-      onError={() => setFailed(true)}
-      className="product-media"
-    />
-  );
-}
+export { ProductImage, VideoPlayer } from "./OfferProduct";
 
 export function OpeningSlide({ sector = "AÇOUGUE" }: { sector?: string }) {
   return (
     <div className="opening-slide">
-      <span>☼</span>
-      <p>SUPERMERCADO</p>
-      <h1>SOL</h1>
+      <img src="/logo-sol.png" alt="Supermercado Sol - O Supermercado da Família" className="opening-logo" />
       <h2>OFERTAS DO {sector.toUpperCase()}</h2>
       <p>Qualidade que cabe no seu dia</p>
     </div>
   );
 }
 
+import type { BadgePosition } from "../motion/types";
+
 export function OfferSlide({
   offer,
-  offers = [],
+  offers,
   layout,
   paused = false,
+  badgeLabel = "OFERTA",
+  badgeType = "text",
+  badgeImage,
+  badgeSize,
+  badgePosition = "top-right",
+  badgeOffsetX = 0,
+  badgeOffsetY = 0,
+  cardStyle = "transparent",
 }: {
-  offer: Offer;
-  offers?: Offer[];
-  layout?: "single" | "pair" | "grid";
+  offer?: Offer;
+  offers?: readonly Offer[];
+  layout?: OfferLayout | LegacyOfferLayout;
   paused?: boolean;
+  badgeLabel?: string;
+  badgeType?: "text" | "image";
+  badgeImage?: string;
+  badgeSize?: number;
+  badgePosition?: BadgePosition;
+  badgeOffsetX?: number;
+  badgeOffsetY?: number;
+  cardStyle?: "transparent" | "card" | "glass" | "bordered";
 }) {
-  const activeLayout = layout || offer.layout || "single";
-  const allOffers = offers.length > 0 ? offers : [offer];
-  const start = allOffers.findIndex((o) => o.id === offer.id);
-  const safeStart = start >= 0 ? start : 0;
-  const count = Math.min(
-    allOffers.length,
-    activeLayout === "grid" ? 4 : activeLayout === "pair" ? 2 : 1,
-  );
-  const selected = Array.from(
-    { length: count },
-    (_, i) => allOffers[(safeStart + i) % allOffers.length],
-  );
+  const fallbackOffer = offer || offers?.[0];
+  if (!fallbackOffer && (!offers || offers.length === 0)) {
+    return null;
+  }
+
+  const activeLayout = normalizeOfferLayout(layout || fallbackOffer?.layout);
+  const layoutDefinition = OFFER_LAYOUTS[activeLayout];
+  const LayoutComponent = OFFER_LAYOUT_COMPONENTS[activeLayout];
+
+  let selected: readonly Offer[];
+
+  if (offers && offers.length > 0 && !offer) {
+    // Direct composition mode: render the exact offers passed
+    selected = offers.slice(0, layoutDefinition.productCount);
+  } else {
+    // Legacy circular slice mode
+    const allOffers = offers && offers.length > 0 ? offers : fallbackOffer ? [fallbackOffer] : [];
+    const start = fallbackOffer ? allOffers.findIndex((o) => o.id === fallbackOffer.id) : 0;
+    const safeStart = start >= 0 ? start : 0;
+    const count = Math.min(allOffers.length, layoutDefinition.productCount);
+    selected = Array.from(
+      { length: count },
+      (_, i) => allOffers[(safeStart + i) % allOffers.length],
+    );
+  }
 
   return (
-    <div className={`slides layout-${activeLayout}`}>
-      {selected.map((o) => (
-        <article className="slide active" key={o.id}>
-          <div className="slide-copy">
-            <div className="eyebrow">Oferta especial</div>
-            <h3 className="product-name">{o.name}</h3>
-            {o.regularPrice && (
-              <div className="old-price">
-                De <span>R$ {o.regularPrice}</span>
-              </div>
-            )}
-            <div className="price">
-              <span className="currency">R$</span>
-              <span className="value">{o.promotionalPrice}</span>
-              <span className="unit">/{o.unit}</span>
-            </div>
-          </div>
-          <div className="media-wrap">
-            {o.video ? (
-              <VideoPlayer src={o.video} paused={paused} />
-            ) : (
-              <ProductImage
-                src={o.image}
-                name={o.name}
-                className="product-media"
-              />
-            )}
-            <div className="badge">OFERTA</div>
-          </div>
-        </article>
+    <LayoutComponent>
+      {selected.map((o, idx) => (
+        <OfferProduct
+          key={`${o.id}-${idx}`}
+          offer={o}
+          paused={paused}
+          badgeLabel={badgeLabel}
+          badgeType={badgeType}
+          badgeImage={badgeImage}
+          badgeSize={badgeSize}
+          badgePosition={badgePosition}
+          badgeOffsetX={badgeOffsetX}
+          badgeOffsetY={badgeOffsetY}
+          cardStyle={cardStyle}
+          animationDelay={`${idx * 0.1}s`}
+        />
       ))}
-    </div>
+    </LayoutComponent>
   );
 }

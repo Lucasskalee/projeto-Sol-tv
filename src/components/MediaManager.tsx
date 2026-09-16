@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
-import { Film, Image as ImageIcon, Pencil, Trash2, Plus, Calendar, Clock, Eye } from "lucide-react";
+import { Film, Image as ImageIcon, Pencil, Trash2, Calendar, Clock, Eye } from "lucide-react";
 import { newMedia, SECTORS, formatDate } from "../data";
 import type { SolTvMedia } from "../types";
+import { deleteMediaStorageFile } from "../supabase";
 import { MediaUpload, type UploadResult } from "./MediaUpload";
 
 export function MediaManager({
@@ -9,11 +10,13 @@ export function MediaManager({
   currentSector,
   onSaveMedia,
   onDeleteMedia,
+  onToggleActiveMedia,
 }: {
   mediaList: SolTvMedia[];
   currentSector: string;
   onSaveMedia: (media: SolTvMedia) => Promise<void>;
   onDeleteMedia: (id: string, storagePath?: string) => Promise<void>;
+  onToggleActiveMedia?: (id: string, active: boolean) => Promise<void> | void;
 }) {
   const [draft, setDraft] = useState<SolTvMedia>(() => newMedia(currentSector));
   const [isEditing, setIsEditing] = useState(false);
@@ -21,7 +24,12 @@ export function MediaManager({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<"all" | "video" | "image">("all");
+
   const sectorMedia = mediaList.filter((m) => m.sector === currentSector);
+  const filteredSectorMedia = sectorMedia.filter(
+    (m) => mediaTypeFilter === "all" || m.type === mediaTypeFilter,
+  );
 
   function field<K extends keyof SolTvMedia>(key: K, value: SolTvMedia[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -69,9 +77,14 @@ export function MediaManager({
       setTimeout(() => setNotice(""), 4000);
     } catch (err: unknown) {
       console.error("Erro ao salvar mídia:", err);
-      setError(
-        err instanceof Error ? err.message : "Erro ao salvar mídia no Supabase.",
-      );
+
+      if (!isEditing && draft.storagePath) {
+        console.warn(`[Cleanup] Removendo arquivo recém-enviado do Storage (${draft.storagePath}) após erro no banco.`);
+        void deleteMediaStorageFile(draft.storagePath);
+      }
+
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Erro ao salvar mídia: ${msg}`);
     } finally {
       setSaving(false);
     }
@@ -230,16 +243,40 @@ export function MediaManager({
       <section className="card">
         <div className="section-heading">
           <h2>Mídias Cadastradas</h2>
-          <span>{sectorMedia.length} mídias</span>
+          <div className="media-filter-pills">
+            <button
+              type="button"
+              className={`media-filter-btn ${mediaTypeFilter === "all" ? "active" : ""}`}
+              onClick={() => setMediaTypeFilter("all")}
+            >
+              Todas ({sectorMedia.length})
+            </button>
+            <button
+              type="button"
+              className={`media-filter-btn ${mediaTypeFilter === "video" ? "active" : ""}`}
+              onClick={() => setMediaTypeFilter("video")}
+            >
+              Vídeos ({sectorMedia.filter((m) => m.type === "video").length})
+            </button>
+            <button
+              type="button"
+              className={`media-filter-btn ${mediaTypeFilter === "image" ? "active" : ""}`}
+              onClick={() => setMediaTypeFilter("image")}
+            >
+              Imagens ({sectorMedia.filter((m) => m.type === "image").length})
+            </button>
+          </div>
         </div>
 
-        {sectorMedia.length === 0 ? (
+        {filteredSectorMedia.length === 0 ? (
           <p className="hint">
-            Nenhuma mídia cadastrada neste setor. Faça o upload acima para adicionar imagens ou vídeos à programação da TV.
+            {sectorMedia.length === 0
+              ? "Nenhuma mídia cadastrada neste setor. Faça o upload acima para adicionar imagens ou vídeos à programação da TV."
+              : "Nenhuma mídia encontrada para o filtro selecionado."}
           </p>
         ) : (
           <div className="offers">
-            {sectorMedia.map((m) => (
+            {filteredSectorMedia.map((m) => (
               <article className="playlist-entry" key={m.id}>
                 <div className="offer-item">
                   {m.type === "video" ? (
@@ -263,7 +300,20 @@ export function MediaManager({
                 </div>
 
                 <div className="playlist-controls">
-                  <span className="media-type-tag">{m.type === "video" ? "VÍDEO" : "IMAGEM"}</span>
+                  <button
+                    type="button"
+                    className={`media-toggle-btn ${m.active ? "active" : "inactive"}`}
+                    onClick={() => {
+                      if (onToggleActiveMedia) {
+                        void onToggleActiveMedia(m.id, !m.active);
+                      } else {
+                        void onSaveMedia({ ...m, active: !m.active });
+                      }
+                    }}
+                    title={m.active ? "Ocultar da TV" : "Exibir na TV"}
+                  >
+                    {m.active ? "Ocultar da TV" : "Exibir na TV"}
+                  </button>
                   <div className="icon-actions">
                     <button
                       type="button"

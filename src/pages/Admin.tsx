@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowUp, Film, LogOut, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  ArrowDown,
+  ArrowUp,
+  Film,
+  LogOut,
+  Package,
+  Palette,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import {
   demoContent,
   contentFromData,
@@ -11,19 +21,32 @@ import {
 import {
   databaseConfigured,
   cachedContent,
+  deleteComposition,
   deleteMedia,
   deleteOffer,
+  getErrorMessage,
+  loadSectorTheme,
   loadTvContent,
   runStorageDiagnostic,
   signOut,
   subscribeToTvContent,
+  updateCompositionsOrder,
+  upsertComposition,
   upsertMedia,
   upsertOffer,
+  upsertSectorTheme,
 } from "../supabase";
 import type { Offer, SolTvMedia, TvContent } from "../types";
+import type { OfferComposition } from "../offers/compositions";
 import { TvPlayer } from "../components/TvPlayer";
 import { ProductImage } from "../components/OfferSlide";
 import { MediaManager } from "../components/MediaManager";
+import { CompositionManager } from "../components/admin/compositions/CompositionManager";
+import { normalTheme } from "../themes/normal";
+import { blackFridayTheme } from "../themes/blackFriday";
+import { getSectorThemeSlug, setSectorThemeSlug } from "../themes/resolveTheme";
+import type { MotionConfig } from "../motion/types";
+import { loadActiveMotionConfig, subscribeToActiveMotionConfig } from "../motion/storage";
 
 const priceValue = (value: string) =>
   Number(
@@ -45,6 +68,13 @@ export default function Admin() {
   const navigate = useNavigate();
   const [sector, setSector] = useState("acougue");
   const [activeTab, setActiveTab] = useState<"offers" | "media">("offers");
+  const [showOfferForm, setShowOfferForm] = useState(false);
+  const [tvThemeSlug, setTvThemeSlug] = useState<"normal" | "black-friday">(() =>
+    (getSectorThemeSlug(sector) as "normal" | "black-friday") || "normal",
+  );
+  const [motionConfig, setMotionConfig] = useState<MotionConfig>(() =>
+    loadActiveMotionConfig(),
+  );
 
   const [content, setContent] = useState<TvContent>(() => cachedContent(sector));
   const [connection, setConnection] = useState<"online" | "syncing" | "offline">(
@@ -55,6 +85,7 @@ export default function Admin() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [productSearch, setProductSearch] = useState("");
   const form = useRef<HTMLFormElement>(null);
   const editing = content.offers.some((o) => o.id === draft.id);
 
@@ -68,9 +99,32 @@ export default function Admin() {
     }
   }
 
+  async function handleSelectTheme(slug: "normal" | "black-friday") {
+    setTvThemeSlug(slug);
+    setSectorThemeSlug(sector, slug);
+    try {
+      await upsertSectorTheme(sector, slug);
+      setNotice(
+        slug === "black-friday"
+          ? "Tema Black Friday aplicado à TV."
+          : "Tema Normal aplicado à TV.",
+      );
+    } catch (err) {
+      console.error("Erro ao persistir tema no Supabase:", err);
+      setNotice(
+        slug === "black-friday"
+          ? "Tema Black Friday aplicado localmente."
+          : "Tema Normal aplicado localmente.",
+      );
+    }
+  }
+
   useEffect(() => {
     setContent(cachedContent(sector));
     setDraft(newOffer(sector));
+    setTvThemeSlug(
+      (getSectorThemeSlug(sector) as "normal" | "black-friday") || "normal",
+    );
 
     if (!databaseConfigured) return;
 
@@ -84,7 +138,17 @@ export default function Admin() {
       })
       .catch(() => setConnection("offline"));
 
-    return subscribeToTvContent(
+    void loadSectorTheme(sector).then((slug) => {
+      if (slug === "normal" || slug === "black-friday") {
+        setTvThemeSlug(slug);
+      }
+    });
+
+    const unsubscribeMotion = subscribeToActiveMotionConfig((newConfig) => {
+      setMotionConfig(newConfig);
+    });
+
+    const unsubscribeContent = subscribeToTvContent(
       sector,
       (data) => {
         setContent(data);
@@ -92,6 +156,11 @@ export default function Admin() {
       },
       setConnection,
     );
+
+    return () => {
+      unsubscribeMotion();
+      unsubscribeContent();
+    };
   }, [sector]);
 
   useEffect(() => {
@@ -112,14 +181,31 @@ export default function Admin() {
       const updatedMedia = content.media.some((m) => m.id === media.id)
         ? content.media.map((m) => (m.id === media.id ? media : m))
         : [...content.media, media];
-      setContent(contentFromData({ sector, offers: content.offers, media: updatedMedia }));
+      setContent(
+        contentFromData({
+          sector,
+          offers: content.offers,
+          media: updatedMedia,
+          compositions: content.compositions,
+        }),
+      );
       setConnection("online");
       setLastSync(new Date());
       setError("");
     } catch (err: unknown) {
-      console.error("Erro ao salvar mídia:", err);
+      const errObj = err && typeof err === "object" ? (err as Record<string, unknown>) : {};
+      const msg = err instanceof Error ? err.message : String(err);
+
+      console.error("Erro detalhado ao salvar mídia no Supabase:", {
+        code: errObj.code,
+        message: errObj.message || msg,
+        details: errObj.details,
+        hint: errObj.hint,
+        status: errObj.status,
+      });
+
       setConnection("offline");
-      setError("Não foi possível salvar a mídia no banco.");
+      setError(`Erro ao salvar mídia: ${msg}`);
       throw err;
     }
   }
@@ -133,7 +219,14 @@ export default function Admin() {
     try {
       await deleteMedia(id, storagePath);
       const updatedMedia = content.media.filter((m) => m.id !== id);
-      setContent(contentFromData({ sector, offers: content.offers, media: updatedMedia }));
+      setContent(
+        contentFromData({
+          sector,
+          offers: content.offers,
+          media: updatedMedia,
+          compositions: content.compositions,
+        }),
+      );
       setConnection("online");
       setLastSync(new Date());
       setNotice("Mídia removida com sucesso.");
@@ -142,6 +235,142 @@ export default function Admin() {
       console.error("Erro ao excluir mídia:", err);
       setConnection("offline");
       setError("Não foi possível excluir a mídia no banco.");
+    }
+  }
+
+  async function handleToggleActiveMedia(id: string, active: boolean) {
+    if (!databaseConfigured) {
+      setError("Banco não configurado.");
+      return;
+    }
+    const target = content.media.find((m) => m.id === id);
+    if (!target) return;
+
+    const isVideo = target.type === "video";
+    const toastMsg = active
+      ? isVideo
+        ? "Vídeo exibido na TV"
+        : "Imagem exibida na TV"
+      : isVideo
+        ? "Vídeo ocultado da TV"
+        : "Imagem ocultada da TV";
+
+    const updatedItem = { ...target, active };
+    const updatedMedia = content.media.map((m) =>
+      m.id === id ? updatedItem : m,
+    );
+
+    setContent(
+      contentFromData({
+        sector,
+        offers: content.offers,
+        media: updatedMedia,
+        compositions: content.compositions,
+      }),
+    );
+    setConnection("syncing");
+
+    try {
+      await upsertMedia(updatedItem);
+      setConnection("online");
+      setLastSync(new Date());
+      setNotice(toastMsg);
+      setError("");
+    } catch (err: unknown) {
+      console.error("Erro ao alterar visibilidade da mídia:", err);
+      setConnection("offline");
+      setError("Não foi possível atualizar a mídia no banco.");
+    }
+  }
+
+  async function handleSaveComposition(composition: OfferComposition) {
+    if (!databaseConfigured) {
+      setError("Banco de dados não configurado.");
+      return;
+    }
+    setConnection("syncing");
+    try {
+      await upsertComposition(composition);
+      const updatedComps = content.compositions.some((c) => c.id === composition.id)
+        ? content.compositions.map((c) => (c.id === composition.id ? composition : c))
+        : [...content.compositions, composition];
+      setContent(
+        contentFromData({
+          sector,
+          offers: content.offers,
+          media: content.media,
+          compositions: updatedComps,
+        }),
+      );
+      setConnection("online");
+      setLastSync(new Date());
+      setNotice("Camada de ofertas salva com sucesso.");
+      setError("");
+    } catch (err: unknown) {
+      console.error("[SKALEE CAMADAS] erro completo ao salvar:", err);
+      console.error("[SKALEE CAMADAS] erro normalizado:", getErrorMessage(err));
+      setConnection("offline");
+      setError(`Erro ao salvar camada: ${getErrorMessage(err)}`);
+      throw err;
+    }
+  }
+
+  async function handleDeleteComposition(id: string) {
+    if (!databaseConfigured) {
+      setError("Banco de dados não configurado.");
+      return;
+    }
+    setConnection("syncing");
+    try {
+      await deleteComposition(id);
+      const updatedComps = content.compositions.filter((c) => c.id !== id);
+      setContent(
+        contentFromData({
+          sector,
+          offers: content.offers,
+          media: content.media,
+          compositions: updatedComps,
+        }),
+      );
+      setConnection("online");
+      setLastSync(new Date());
+      setNotice("Camada de ofertas excluída com sucesso.");
+      setError("");
+    } catch (err: unknown) {
+      console.error("[SKALEE CAMADAS] erro completo ao excluir:", err);
+      console.error("[SKALEE CAMADAS] erro normalizado:", getErrorMessage(err));
+      setConnection("offline");
+      setError(`Erro ao excluir camada: ${getErrorMessage(err)}`);
+      throw err;
+    }
+  }
+
+  async function handleReorderCompositions(reordered: OfferComposition[]) {
+    if (!databaseConfigured) {
+      setError("Banco de dados não configurado.");
+      return;
+    }
+    setConnection("syncing");
+    try {
+      await updateCompositionsOrder(reordered);
+      setContent(
+        contentFromData({
+          sector,
+          offers: content.offers,
+          media: content.media,
+          compositions: reordered,
+        }),
+      );
+      setConnection("online");
+      setLastSync(new Date());
+      setNotice("Ordem das camadas atualizada com sucesso.");
+      setError("");
+    } catch (err: unknown) {
+      console.error("[SKALEE CAMADAS] erro completo ao reordenar:", err);
+      console.error("[SKALEE CAMADAS] erro normalizado:", getErrorMessage(err));
+      setConnection("offline");
+      setError(`Erro ao reordenar camadas: ${getErrorMessage(err)}`);
+      throw err;
     }
   }
 
@@ -163,7 +392,14 @@ export default function Admin() {
       (offer) => !offers.some((nextOffer) => nextOffer.id === offer.id),
     );
 
-    setContent(contentFromData({ sector, offers, media: content.media }));
+    setContent(
+      contentFromData({
+        sector,
+        offers,
+        media: content.media,
+        compositions: content.compositions,
+      }),
+    );
     setConnection("syncing");
 
     void Promise.all([
@@ -241,13 +477,10 @@ export default function Admin() {
       );
     }
 
-    if (
-      !Number.isFinite(draft.duration) ||
-      draft.duration < 3 ||
-      draft.duration > 60
-    ) {
-      return setError("A duração deve estar entre 3 e 60 segundos.");
-    }
+    const safeDuration =
+      Number.isFinite(draft.duration) && draft.duration >= 3 && draft.duration <= 60
+        ? draft.duration
+        : 8;
 
     const offer: Offer = {
       ...draft,
@@ -255,6 +488,8 @@ export default function Admin() {
       name: draft.name.trim(),
       promotionalPrice: price.toFixed(2).replace(".", ","),
       regularPrice: regular?.toFixed(2).replace(".", ","),
+      duration: safeDuration,
+      layout: draft.layout || "single",
     };
 
     const nextOffers = editing
@@ -264,7 +499,7 @@ export default function Admin() {
     if (
       commit(
         nextOffers,
-        editing ? "Oferta atualizada." : "Oferta adicionada à playlist.",
+        editing ? "Produto atualizado com sucesso." : "Produto cadastrado no catálogo.",
       )
     ) {
       setDraft(newOffer(sector));
@@ -281,23 +516,17 @@ export default function Admin() {
 
   function removeOffer(offerId: string) {
     const nextOffers = content.offers.filter((o) => o.id !== offerId);
-    if (commit(nextOffers, "Item removido.")) {
+    if (commit(nextOffers, "Produto removido.")) {
       if (draft.id === offerId) setDraft(newOffer(sector));
     }
-  }
-
-  function updateOfferLayout(id: string, layout: "single" | "pair" | "grid") {
-    const nextOffers = content.offers.map((o) =>
-      o.id === id ? { ...o, layout } : o,
-    );
-    commit(nextOffers);
   }
 
   function toggleOfferActive(id: string, active: boolean) {
     const nextOffers = content.offers.map((o) =>
       o.id === id ? { ...o, active } : o,
     );
-    commit(nextOffers);
+    const msg = active ? "Produto ativado no catálogo" : "Produto desativado do catálogo";
+    commit(nextOffers, msg);
   }
 
   const currentSectorLabel =
@@ -342,256 +571,295 @@ export default function Admin() {
         </div>
 
         {/* Admin Navigation Tabs */}
-        <div className="admin-tabs">
+        <div className="admin-tabs admin-tabs-2">
           <button
             type="button"
             className={`admin-tab-btn ${activeTab === "offers" ? "active" : ""}`}
             onClick={() => setActiveTab("offers")}
           >
-            <Package size={15} /> Ofertas ({content.offers.length})
+            <Package size={14} /> Ofertas ({content.offers.length})
           </button>
           <button
             type="button"
             className={`admin-tab-btn ${activeTab === "media" ? "active" : ""}`}
             onClick={() => setActiveTab("media")}
           >
-            <Film size={15} /> Mídia TV ({content.media.length})
+            <Film size={14} /> Mídias ({content.media.length})
           </button>
         </div>
 
-        {/* Offers Tab */}
+        {/* Ofertas Tab (Camadas da TV + Catálogo de Ofertas) */}
         {activeTab === "offers" && (
           <>
-            <form className="card" ref={form} onSubmit={submit}>
-              <h2>{editing ? "Editar oferta" : "Cadastrar oferta"}</h2>
-              <label htmlFor="name">Produto</label>
-              <input
-                id="name"
-                required
-                maxLength={65}
-                value={draft.name}
-                onChange={(e) => field("name", e.target.value)}
-                placeholder="Ex.: Picanha bovina"
+            {/* SEÇÃO 1: CAMADAS DA TV */}
+            <div className="admin-camadas-section">
+              <CompositionManager
+                sector={sector}
+                sectorLabel={currentSectorLabel}
+                offers={content.offers}
+                media={content.media}
+                compositions={content.compositions}
+                hidePreview={true}
+                onSaveComposition={handleSaveComposition}
+                onDeleteComposition={handleDeleteComposition}
+                onReorderCompositions={handleReorderCompositions}
               />
-              <div className="row">
-                <div>
-                  <label htmlFor="regularPrice">Preço normal</label>
-                  <input
-                    id="regularPrice"
-                    inputMode="decimal"
-                    value={draft.regularPrice || ""}
-                    onChange={(e) => field("regularPrice", e.target.value)}
-                    placeholder="59,90"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="price">Preço da oferta</label>
-                  <input
-                    id="price"
-                    required
-                    inputMode="decimal"
-                    value={draft.promotionalPrice}
-                    onChange={(e) => field("promotionalPrice", e.target.value)}
-                    placeholder="44,99"
-                  />
-                </div>
-              </div>
-              <div className="row">
-                <div>
-                  <label htmlFor="unit">Unidade</label>
-                  <select
-                    id="unit"
-                    value={draft.unit}
-                    onChange={(e) => field("unit", e.target.value)}
-                  >
-                    {["kg", "un", "bandeja", "peça", "pct"].map((u) => (
-                      <option key={u}>{u}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="duration">Duração (segundos)</label>
-                  <input
-                    id="duration"
-                    type="number"
-                    min="3"
-                    max="60"
-                    required
-                    value={draft.duration}
-                    onChange={(e) => field("duration", Number(e.target.value))}
-                  />
-                </div>
-              </div>
-              <label htmlFor="image">Imagem da oferta</label>
-              <input
-                id="image"
-                type="url"
-                required
-                value={draft.image}
-                onChange={(e) => field("image", e.target.value)}
-                placeholder="Cole uma URL de imagem"
-              />
-              <details>
-                <summary>Agendamento e vídeo da oferta</summary>
-                <div className="row">
-                  <div>
-                    <label htmlFor="start">Início</label>
-                    <input
-                      id="start"
-                      type="date"
-                      required
-                      value={draft.startsAt}
-                      onChange={(e) => field("startsAt", e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="end">Término</label>
-                    <input
-                      id="end"
-                      type="date"
-                      required
-                      value={draft.endsAt}
-                      onChange={(e) => field("endsAt", e.target.value)}
-                    />
-                  </div>
-                </div>
-                <label htmlFor="video">URL do vídeo (opcional)</label>
-                <input
-                  id="video"
-                  type="url"
-                  value={draft.video || ""}
-                  onChange={(e) => field("video", e.target.value)}
-                  placeholder="https://…/video.mp4"
-                />
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={draft.active}
-                    onChange={(e) => field("active", e.target.checked)}
-                  />{" "}
-                  Oferta ativa
-                </label>
-              </details>
-              <button className="btn btn-primary submit">
-                {editing ? "Salvar oferta" : "Adicionar à playlist"}
-              </button>
-              {editing && (
-                <button
-                  type="button"
-                  className="btn btn-secondary submit"
-                  onClick={() => {
-                    setDraft(newOffer(sector));
-                    setError("");
-                  }}
-                >
-                  Cancelar edição
-                </button>
-              )}
-            </form>
+            </div>
 
-            <section className="card">
+            {/* SEÇÃO 2: CATÁLOGO DE OFERTAS */}
+            <section className="card admin-catalog-section">
               <div className="section-heading">
-                <h2>Ofertas em Exibição</h2>
+                <h2>Catálogo de Ofertas ({currentSectorLabel})</h2>
                 <span>{content.offers.length} ofertas</span>
               </div>
+
+              <div className="catalog-toolbar" style={{ display: "flex", gap: "10px", marginBottom: "14px", flexWrap: "wrap" }}>
+                <input
+                  type="search"
+                  className="search-input"
+                  placeholder="Buscar oferta no catálogo..."
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  style={{ flex: 1, minWidth: "160px" }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary action-btn-compact"
+                  onClick={() => {
+                    setDraft(newOffer(sector));
+                    setShowOfferForm(true);
+                    setTimeout(() => {
+                      form.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                      document.getElementById("name")?.focus();
+                    }, 50);
+                  }}
+                >
+                  <Plus size={15} />
+                  + Nova oferta
+                </button>
+              </div>
+
+              {/* Form de Cadastro / Edição de Oferta */}
+              {(showOfferForm || editing) && (
+                <form className="card offer-form-nested" ref={form} onSubmit={submit} style={{ marginBottom: "16px", background: "#11141a" }}>
+                  <div className="section-heading" style={{ marginBottom: "10px" }}>
+                    <h3 style={{ margin: 0, fontSize: "14px" }}>{editing ? "Editar Oferta" : "Cadastrar Nova Oferta"}</h3>
+                  </div>
+                  <label htmlFor="name">Nome da oferta / produto</label>
+                  <input
+                    id="name"
+                    required
+                    maxLength={65}
+                    value={draft.name}
+                    onChange={(e) => field("name", e.target.value)}
+                    placeholder="Ex.: Picanha bovina"
+                  />
+                  <div className="row">
+                    <div>
+                      <label htmlFor="regularPrice">Preço normal</label>
+                      <input
+                        id="regularPrice"
+                        inputMode="decimal"
+                        value={draft.regularPrice || ""}
+                        onChange={(e) => field("regularPrice", e.target.value)}
+                        placeholder="59,90"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="price">Preço promocional</label>
+                      <input
+                        id="price"
+                        required
+                        inputMode="decimal"
+                        value={draft.promotionalPrice}
+                        onChange={(e) => field("promotionalPrice", e.target.value)}
+                        placeholder="44,99"
+                      />
+                    </div>
+                  </div>
+                  <div className="row">
+                    <div>
+                      <label htmlFor="unit">Unidade</label>
+                      <select
+                        id="unit"
+                        value={draft.unit}
+                        onChange={(e) => field("unit", e.target.value)}
+                      >
+                        {["kg", "un", "bandeja", "peça", "pct"].map((u) => (
+                          <option key={u}>{u}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <label htmlFor="image">Imagem da oferta (URL)</label>
+                  <input
+                    id="image"
+                    type="url"
+                    required
+                    value={draft.image}
+                    onChange={(e) => field("image", e.target.value)}
+                    placeholder="Cole uma URL de imagem"
+                  />
+                  <details>
+                    <summary>Agendamento e vídeo da oferta</summary>
+                    <div className="row">
+                      <div>
+                        <label htmlFor="start">Início da vigência</label>
+                        <input
+                          id="start"
+                          type="date"
+                          required
+                          value={draft.startsAt}
+                          onChange={(e) => field("startsAt", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="end">Término da vigência</label>
+                        <input
+                          id="end"
+                          type="date"
+                          required
+                          value={draft.endsAt}
+                          onChange={(e) => field("endsAt", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <label htmlFor="video">URL do vídeo (opcional)</label>
+                    <input
+                      id="video"
+                      type="url"
+                      value={draft.video || ""}
+                      onChange={(e) => field("video", e.target.value)}
+                      placeholder="https://…/video.mp4"
+                    />
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={draft.active}
+                        onChange={(e) => field("active", e.target.checked)}
+                      />{" "}
+                      Oferta ativa no catálogo
+                    </label>
+                  </details>
+                  <div className="row" style={{ marginTop: "12px" }}>
+                    <button className="btn btn-primary submit">
+                      {editing ? "Salvar alterações" : "Cadastrar oferta"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary submit"
+                      onClick={() => {
+                        setDraft(newOffer(sector));
+                        setShowOfferForm(false);
+                        setError("");
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              )}
+
               <div className="offers">
                 {content.offers.length === 0 && (
                   <p className="hint">
                     Nenhuma oferta cadastrada no setor {currentSectorLabel}.
                   </p>
                 )}
-                {content.offers.map((o, i) => (
-                  <article className="playlist-entry" key={o.id}>
-                    <div className="offer-item">
-                      <ProductImage
-                        src={o.image}
-                        name={o.name}
-                        className="offer-thumb"
-                      />
-                      <div className="offer-info">
-                        <strong>{o.name}</strong>
-                        <span>
-                          R$ {o.promotionalPrice}/{o.unit} · {o.duration}s
-                        </span>
-                        {!isEligible(o) && (
-                          <small className="scheduled">
-                            {o.active ? "Fora do período" : "Oferta inativa"}
-                          </small>
-                        )}
+                {content.offers.length > 0 &&
+                  content.offers.filter((o) =>
+                    o.name.toLowerCase().includes(productSearch.toLowerCase().trim()),
+                  ).length === 0 && (
+                    <p className="hint">
+                      Nenhuma oferta encontrada para "{productSearch}".
+                    </p>
+                  )}
+                {content.offers
+                  .filter((o) =>
+                    o.name.toLowerCase().includes(productSearch.toLowerCase().trim()),
+                  )
+                  .map((o, i, filteredArr) => (
+                    <article className="playlist-entry" key={o.id}>
+                      <div className="offer-item">
+                        <ProductImage
+                          src={o.image}
+                          name={o.name}
+                          className="offer-thumb"
+                        />
+                        <div className="offer-info">
+                          <strong>{o.name}</strong>
+                          <span>
+                            R$ {o.promotionalPrice}/{o.unit}
+                            {o.regularPrice ? ` · De: R$ ${o.regularPrice}` : ""}
+                          </span>
+                          {!isEligible(o) && (
+                            <small className="scheduled">
+                              {o.active ? "Fora do período" : "Oferta inativa"}
+                            </small>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="playlist-controls">
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={o.active}
-                          onChange={(e) => toggleOfferActive(o.id, e.target.checked)}
-                          aria-label={`Exibir ${o.name}`}
-                        />{" "}
-                        Exibir
-                      </label>
-                      <div className="icon-actions">
-                        <button
-                          type="button"
-                          className="mini-btn"
-                          aria-label={`Subir ${o.name}`}
-                          disabled={i === 0}
-                          onClick={() => moveOffer(i, -1)}
-                        >
-                          <ArrowUp size={15} />
-                        </button>
-                        <button
-                          type="button"
-                          className="mini-btn"
-                          aria-label={`Descer ${o.name}`}
-                          disabled={i === content.offers.length - 1}
-                          onClick={() => moveOffer(i, 1)}
-                        >
-                          <ArrowDown size={15} />
-                        </button>
-                        <button
-                          type="button"
-                          className="mini-btn"
-                          aria-label={`Editar ${o.name}`}
-                          onClick={() => {
-                            setDraft({ ...o });
-                            setError("");
-                            form.current?.scrollIntoView({
-                              behavior: "smooth",
-                              block: "start",
-                            });
-                            document.getElementById("name")?.focus();
-                          }}
-                        >
-                          <Pencil size={15} />
-                        </button>
-                        <button
-                          type="button"
-                          className="mini-btn danger"
-                          aria-label={`Excluir ${o.name}`}
-                          onClick={() => removeOffer(o.id)}
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                      <div className="playlist-controls">
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={o.active}
+                            onChange={(e) => toggleOfferActive(o.id, e.target.checked)}
+                            aria-label={`Ativar ${o.name}`}
+                          />{" "}
+                          Ativo
+                        </label>
+                        <div className="icon-actions">
+                          <button
+                            type="button"
+                            className="mini-btn"
+                            aria-label={`Subir ${o.name}`}
+                            disabled={i === 0 || productSearch.trim().length > 0}
+                            onClick={() => moveOffer(content.offers.indexOf(o), -1)}
+                          >
+                            <ArrowUp size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            className="mini-btn"
+                            aria-label={`Descer ${o.name}`}
+                            disabled={i === filteredArr.length - 1 || productSearch.trim().length > 0}
+                            onClick={() => moveOffer(content.offers.indexOf(o), 1)}
+                          >
+                            <ArrowDown size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            className="mini-btn"
+                            aria-label={`Editar ${o.name}`}
+                            onClick={() => {
+                              setDraft({ ...o });
+                              setShowOfferForm(true);
+                              setError("");
+                              form.current?.scrollIntoView({
+                                behavior: "smooth",
+                                block: "start",
+                              });
+                              document.getElementById("name")?.focus();
+                            }}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            className="mini-btn danger"
+                            aria-label={`Excluir ${o.name}`}
+                            onClick={() => removeOffer(o.id)}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <select
-                      className="layout-select"
-                      aria-label={`Layout de ${o.name}`}
-                      value={o.layout}
-                      onChange={(e) =>
-                        updateOfferLayout(
-                          o.id,
-                          e.target.value as "single" | "pair" | "grid",
-                        )
-                      }
-                    >
-                      <option value="single">Uma oferta</option>
-                      <option value="pair">Duas ofertas</option>
-                      <option value="grid">Grade de quatro</option>
-                    </select>
-                  </article>
-                ))}
+                    </article>
+                  ))}
               </div>
             </section>
           </>
@@ -604,6 +872,7 @@ export default function Admin() {
             currentSector={sector}
             onSaveMedia={handleSaveMedia}
             onDeleteMedia={handleDeleteMedia}
+            onToggleActiveMedia={handleToggleActiveMedia}
           />
         )}
 
@@ -619,6 +888,7 @@ export default function Admin() {
                   const demo = demoContent(sector);
                   commit(demo.offers, "Demonstração restaurada.");
                   setDraft(newOffer(sector));
+                  setShowOfferForm(false);
                   setResetting(false);
                 }}
               >
@@ -672,14 +942,79 @@ export default function Admin() {
           lastSync={lastSync}
           connection={connection}
           sectorLabel={currentSectorLabel}
+          theme={tvThemeSlug === "black-friday" ? blackFridayTheme : normalTheme}
+          motionConfig={motionConfig}
         />
+
+        {/* Controle Global do Tema da TV */}
+        <section className="card admin-theme-card">
+          <div className="section-heading">
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <Palette size={18} style={{ color: "var(--accent)" }} />
+              <div>
+                <h2 style={{ margin: 0, fontSize: "15px" }}>
+                  TEMA DA TV — {currentSectorLabel}
+                </h2>
+                <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--muted)" }}>
+                  Aparência visual aplicada globalmente à programação deste setor.
+                </p>
+              </div>
+            </div>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: "700",
+                padding: "4px 10px",
+                borderRadius: "8px",
+                background: tvThemeSlug === "black-friday" ? "rgba(255, 92, 92, 0.15)" : "rgba(242, 201, 76, 0.15)",
+                color: tvThemeSlug === "black-friday" ? "#ff7b72" : "var(--accent)",
+                border: `1px solid ${tvThemeSlug === "black-friday" ? "rgba(255, 92, 92, 0.3)" : "rgba(242, 201, 76, 0.3)"}`,
+              }}
+            >
+              Tema ativo: <strong>{tvThemeSlug === "black-friday" ? "Black Friday" : "Normal"}</strong>
+            </span>
+          </div>
+
+          <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              type="button"
+              className={`btn ${tvThemeSlug === "normal" ? "btn-primary" : "btn-secondary"}`}
+              style={{ width: "auto", minWidth: "150px" }}
+              onClick={() => void handleSelectTheme("normal")}
+            >
+              Tema Normal
+            </button>
+            <button
+              type="button"
+              className={`btn ${tvThemeSlug === "black-friday" ? "btn-primary" : "btn-secondary"}`}
+              style={{ width: "auto", minWidth: "150px" }}
+              onClick={() => void handleSelectTheme("black-friday")}
+            >
+              Black Friday
+            </button>
+          </div>
+        </section>
+
+        {/* Skalee Motion Studio Highlighted Card */}
+        <section className="card admin-motion-studio-card">
+          <div className="studio-card-content">
+            <div className="studio-card-icon">🎬</div>
+            <div className="studio-card-body">
+              <h2>Skalee Motion Studio</h2>
+              <p>Crie, teste e salve a identidade visual das TVs.</p>
+            </div>
+          </div>
+          <Link to="/studio/motion" className="btn btn-primary studio-launch-btn">
+            Abrir Motion Studio ↗
+          </Link>
+        </section>
 
         <div className="info-card">
           <span>☼</span>
           <div>
-            <strong>Playlist Unificada do Setor {currentSectorLabel}</strong>
+            <strong>Programação da TV — {currentSectorLabel}</strong>
             <p>
-              Adicione ofertas de produtos, imagens institucionais ou vídeos promocionais. A TV reproduz todos os conteúdos de forma automática e contínua.
+              Camadas de ofertas, imagens institucionais e vídeos promocionais. A TV reproduz todos os conteúdos de forma automática e contínua.
             </p>
           </div>
         </div>
