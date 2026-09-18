@@ -10532,7 +10532,7 @@ details .check {
   height: 100%;
   overflow: hidden;
   pointer-events: none;
-  z-index: 10;
+  z-index: 50;
 }
 
 /* Brilho de calor sutil na região inferior da TV */

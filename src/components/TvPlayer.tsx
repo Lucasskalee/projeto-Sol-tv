@@ -20,6 +20,7 @@ import { BlackFridayDecorations } from "./BlackFridayDecorations";
 import { BlackFridayImageElement } from "./motion/BlackFridayImageElement";
 import { FireSparks } from "./effects/FireSparks";
 import type { ThemeDefinition } from "../themes/types";
+import { resolveTheme } from "../themes/resolveTheme";
 import { toThemeStyle } from "../themes/toThemeStyle";
 import { normalizeOfferLayout, type OfferLayout } from "../offers/layouts";
 import type { MotionConfig } from "../motion/types";
@@ -76,15 +77,16 @@ export function TvPlayer({
 
   // Theme resolution overlayed with active motion tokens
   const effectiveTheme = useMemo(() => {
-    if (!activeMotion) return theme;
+    const targetTheme = activeMotion?.themeSlug ? resolveTheme(activeMotion.themeSlug) : theme;
+    if (!activeMotion) return targetTheme;
     return {
-      ...theme,
+      ...targetTheme,
       tokens: {
-        ...theme.tokens,
+        ...targetTheme.tokens,
         badge: {
-          ...theme.tokens.badge,
-          label: activeMotion.badge.text || theme.tokens.badge.label,
-          background: activeMotion.badge.background || theme.tokens.badge.background,
+          ...targetTheme.tokens.badge,
+          label: activeMotion.badge.text || targetTheme.tokens.badge.label,
+          background: activeMotion.badge.background || targetTheme.tokens.badge.background,
         },
       },
     };

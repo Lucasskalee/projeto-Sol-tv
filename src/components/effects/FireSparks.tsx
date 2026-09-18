@@ -73,7 +73,7 @@ export function FireSparks({
   bottomGlowOpacity,
   maxHeight,
   performance = "normal",
-  zIndex = 2,
+  zIndex = 50,
   className = "",
 }: FireSparksProps) {
   if (!enabled) {
