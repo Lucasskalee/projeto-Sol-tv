@@ -781,6 +781,20 @@ export function TvPlayer({
             speed={paintSpeed}
           />
           {isDecorationsVisible && <BlackFridayDecorations fx={activeMotion?.fx} />}
+          {isFireSparksVisible && (
+            <FireSparks
+              enabled={true}
+              intensity={activeMotion?.fx?.fireSparks?.intensity || activeMotion?.fireSparks?.intensity || "commercial"}
+              particleCount={activeMotion?.fx?.fireSparks?.particleCount ?? activeMotion?.fireSparks?.particleCount ?? 28}
+              speed={activeMotion?.fx?.fireSparks?.speed ?? activeMotion?.fireSparks?.speed ?? 1}
+              size={activeMotion?.fx?.fireSparks?.size ?? activeMotion?.fireSparks?.size ?? 1.1}
+              bottomGlow={activeMotion?.fx?.fireSparks?.bottomGlow ?? activeMotion?.fireSparks?.bottomGlow ?? true}
+              bottomGlowOpacity={activeMotion?.fx?.fireSparks?.bottomGlowOpacity ?? activeMotion?.fireSparks?.bottomGlowOpacity ?? 45}
+              maxHeight={activeMotion?.fx?.fireSparks?.maxHeight ?? activeMotion?.fireSparks?.maxHeight ?? 105}
+              performance={activeMotion?.fx?.fireSparks?.performance || activeMotion?.fireSparks?.performance || "normal"}
+              zIndex={50}
+            />
+          )}
         </div>
         <div
           className="progress"
