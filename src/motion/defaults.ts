@@ -277,9 +277,11 @@ export function cloneMotionConfig(config: MotionConfig): MotionConfig {
           stamp: config.fx.stamp ? { ...config.fx.stamp } : undefined,
           confetti: config.fx.confetti ? { ...config.fx.confetti } : undefined,
           cornerTapes: config.fx.cornerTapes ? { ...config.fx.cornerTapes } : undefined,
-          fireSparks: config.fx.fireSparks ? { ...config.fx.fireSparks } : undefined,
+          fireSparks: config.fx.fireSparks
+            ? { ...DEFAULT_FIRE_SPARKS_CONFIG, ...config.fx.fireSparks }
+            : { ...DEFAULT_FIRE_SPARKS_CONFIG },
         }
-      : undefined,
+      : { ...DEFAULT_MOTION_CONFIG.fx },
     colorOverrides: config.colorOverrides ? { ...config.colorOverrides } : undefined,
     elementAnimations: config.elementAnimations ? { ...config.elementAnimations } : undefined,
     visibility: config.visibility
