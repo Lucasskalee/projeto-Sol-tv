@@ -10526,11 +10526,13 @@ details .check {
    ============================================================================== */
 .fire-sparks {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   pointer-events: none;
-  z-index: 2;
-  contain: strict;
+  z-index: 10;
 }
 
 /* Brilho de calor sutil na região inferior da TV */
@@ -10538,8 +10540,8 @@ details .check {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -45px;
-  height: 140px;
+  bottom: 0;
+  height: 130px;
   background: radial-gradient(
     ellipse at bottom,
     rgba(255, 70, 0, 0.28),
@@ -10618,7 +10620,7 @@ details .check {
     opacity: var(--opacity-peak, 0.95);
   }
   42% {
-    transform: translate3d(var(--drift-mid, 10px), calc(var(--max-height, -105vh) * 0.42), 0) rotate(5deg) scale(1);
+    transform: translate3d(var(--drift-mid, 10px), var(--max-height-mid, -45vh), 0) rotate(5deg) scale(1);
     opacity: var(--opacity-peak, 0.95);
   }
   75% {

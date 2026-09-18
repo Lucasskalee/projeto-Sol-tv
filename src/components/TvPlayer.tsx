@@ -175,8 +175,9 @@ export function TvPlayer({
     activeMotion?.fx?.brushCorners?.enabled !== false &&
     isDecorationsVisible;
   const isFireSparksVisible =
-    (activeMotion?.fx?.fireSparks?.enabled || activeMotion?.fireSparks?.enabled) &&
-    activeMotion?.visibility?.fireSparks !== false;
+    activeMotion?.visibility?.fireSparks !== false &&
+    (activeMotion?.fx?.fireSparks?.enabled !== false &&
+      activeMotion?.fireSparks?.enabled !== false);
   const isBadgeAllowed = activeMotion?.visibility?.badge !== false && activeMotion?.badge?.visible !== false;
   const isOldPriceVisible = activeMotion?.visibility?.oldPrice !== false;
   const isUnitVisible = activeMotion?.visibility?.unit !== false;
@@ -931,7 +932,7 @@ export function TvPlayer({
               bottomGlowOpacity={activeMotion?.fx?.fireSparks?.bottomGlowOpacity ?? activeMotion?.fireSparks?.bottomGlowOpacity ?? 25}
               maxHeight={activeMotion?.fx?.fireSparks?.maxHeight ?? activeMotion?.fireSparks?.maxHeight ?? 105}
               performance={activeMotion?.fx?.fireSparks?.performance || activeMotion?.fireSparks?.performance || "normal"}
-              zIndex={2}
+              zIndex={10}
             />
           )}
         </div>

@@ -168,6 +168,7 @@ export function FireSparks({
         {
           zIndex,
           "--max-height": `-${effectiveMaxHeight}vh`,
+          "--max-height-mid": `-${Math.round(effectiveMaxHeight * 0.42)}vh`,
         } as React.CSSProperties
       }
     >

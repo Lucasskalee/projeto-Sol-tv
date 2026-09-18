@@ -1,7 +1,7 @@
 import type { MotionConfig, MotionBlackFridayImageConfig, MotionFireSparksConfig } from "./types";
 
 export const DEFAULT_FIRE_SPARKS_CONFIG: MotionFireSparksConfig = Object.freeze({
-  enabled: false,
+  enabled: true,
   intensity: "commercial" as const,
   particleCount: 26,
   speed: 1,

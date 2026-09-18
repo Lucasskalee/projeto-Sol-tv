@@ -157,6 +157,17 @@ export const DEFAULT_PRESETS: readonly MotionPreset[] = Object.freeze([
           text: "BLACK FRIDAY",
           position: "top-left",
         },
+        fireSparks: {
+          enabled: true,
+          intensity: "commercial",
+          particleCount: 26,
+          speed: 1,
+          size: 1,
+          bottomGlow: true,
+          bottomGlowOpacity: 25,
+          maxHeight: 105,
+          performance: "normal",
+        },
       },
       colorOverrides: {
         enabled: true,
