@@ -6,6 +6,92 @@ const STORAGE_KEY = "skalee_motion_presets_v1";
 const ACTIVE_PRESET_ID_KEY = "skalee_active_preset_id_v1";
 const ACTIVE_CONFIG_KEY = "skalee_active_motion_config_v1";
 
+/**
+ * Strips heavy ephemeral strings (Base64 data URLs or blob: URLs) from MotionConfig
+ * before persisting to localStorage or remote database.
+ * Preserves remote HTTPS URLs (e.g. Supabase Storage URLs) and all visual settings.
+ */
+export function sanitizeMotionConfigForStorage(config: MotionConfig): MotionConfig {
+  const cloned = cloneMotionConfig(config);
+
+  const cleanUrl = (val: string | undefined): string => {
+    if (!val) return "";
+    // If it's a huge base64, temporary blob URL, or oversized data, strip it to prevent QuotaExceeded & CORS/413 payload issues
+    if (val.startsWith("data:") || val.startsWith("blob:") || val.length > 2048) {
+      return "";
+    }
+    return val;
+  };
+
+  if (cloned.logo?.image) {
+    cloned.logo.image = cleanUrl(cloned.logo.image);
+  }
+  if (cloned.logo?.originalImage) {
+    cloned.logo.originalImage = cleanUrl(cloned.logo.originalImage);
+  }
+  if (cloned.badge?.image) {
+    cloned.badge.image = cleanUrl(cloned.badge.image);
+  }
+  if (cloned.background?.imageUrl) {
+    cloned.background.imageUrl = cleanUrl(cloned.background.imageUrl);
+  }
+  if (cloned.blackFridayImage) {
+    cloned.blackFridayImage.src = cleanUrl(cloned.blackFridayImage.src);
+    cloned.blackFridayImage.originalSrc = cleanUrl(cloned.blackFridayImage.originalSrc);
+  }
+
+  return cloned;
+}
+
+/**
+ * Safely writes a key-value pair to localStorage, handling QuotaExceededError and quota limits.
+ * Cleans up old cache keys if quota is exceeded. Never crashes the application.
+ */
+export function safeLocalStorageSetItem(key: string, value: string): boolean {
+  if (typeof localStorage === "undefined") return false;
+
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error: any) {
+    const isQuota =
+      error?.name === "QuotaExceededError" ||
+      error?.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+      error?.code === 22 ||
+      error?.code === 1014 ||
+      (typeof error?.message === "string" && error.message.toLowerCase().includes("quota"));
+
+    if (isQuota) {
+      try {
+        // Attempt cleanup of stale visual cache
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k !== key && (k.startsWith("sol-tv-") || k.startsWith("skalee_motion_presets_v1"))) {
+            const item = localStorage.getItem(k);
+            if (item && item.length > 100000) {
+              keysToRemove.push(k);
+            }
+          }
+        }
+        for (const k of keysToRemove) {
+          localStorage.removeItem(k);
+        }
+
+        // Retry saving after cleanup
+        localStorage.setItem(key, value);
+        return true;
+      } catch (retryError) {
+        console.warn(`[Storage] Armazenamento local cheio. Não foi possível salvar "${key}".`, retryError);
+        return false;
+      }
+    }
+
+    console.warn(`[Storage] Erro ao gravar chave "${key}" no localStorage:`, error);
+    return false;
+  }
+}
+
 export function loadPresets(): MotionPreset[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -31,7 +117,11 @@ export function loadPresets(): MotionPreset[] {
 
 export function savePresets(presets: MotionPreset[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+    const sanitizedPresets = presets.map((p) => ({
+      ...p,
+      config: sanitizeMotionConfigForStorage(p.config),
+    }));
+    safeLocalStorageSetItem(STORAGE_KEY, JSON.stringify(sanitizedPresets));
   } catch (error) {
     console.error("[Motion Studio] Erro ao gravar presets no localStorage.", error);
   }
@@ -48,7 +138,7 @@ export function loadActivePresetId(): string {
 
 export function saveActivePresetId(id: string): void {
   try {
-    localStorage.setItem(ACTIVE_PRESET_ID_KEY, id);
+    safeLocalStorageSetItem(ACTIVE_PRESET_ID_KEY, id);
   } catch (error) {
     console.error("[Motion Studio] Erro ao salvar activePresetId:", error);
   }
@@ -70,7 +160,8 @@ export function loadActiveMotionConfig(): MotionConfig {
 
 export function saveActiveMotionConfig(config: MotionConfig): void {
   try {
-    localStorage.setItem(ACTIVE_CONFIG_KEY, JSON.stringify(config));
+    const sanitized = sanitizeMotionConfigForStorage(config);
+    safeLocalStorageSetItem(ACTIVE_CONFIG_KEY, JSON.stringify(sanitized));
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("skalee:motion-config-changed", { detail: config })

@@ -17,22 +17,25 @@ to public
 using (bucket_id = 'tv-media');
 
 drop policy if exists "SOL TV - upload autenticado" on storage.objects;
-create policy "SOL TV - upload autenticado"
+drop policy if exists "SOL TV - upload publico" on storage.objects;
+create policy "SOL TV - upload publico"
 on storage.objects for insert
-to authenticated
+to anon, authenticated
 with check (bucket_id = 'tv-media');
 
 drop policy if exists "SOL TV - atualizar autenticado" on storage.objects;
-create policy "SOL TV - atualizar autenticado"
+drop policy if exists "SOL TV - atualizar publico" on storage.objects;
+create policy "SOL TV - atualizar publico"
 on storage.objects for update
-to authenticated
+to anon, authenticated
 using (bucket_id = 'tv-media')
 with check (bucket_id = 'tv-media');
 
 drop policy if exists "SOL TV - excluir autenticado" on storage.objects;
-create policy "SOL TV - excluir autenticado"
+drop policy if exists "SOL TV - excluir publico" on storage.objects;
+create policy "SOL TV - excluir publico"
 on storage.objects for delete
-to authenticated
+to anon, authenticated
 using (bucket_id = 'tv-media');
 
 commit;

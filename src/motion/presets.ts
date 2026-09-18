@@ -61,24 +61,40 @@ export const DEFAULT_PRESETS: readonly MotionPreset[] = Object.freeze([
     updatedAt: "2026-09-01T00:00:00.000Z",
     config: {
       themeSlug: "black-friday",
-      layout: "hero",
+      layout: "grid8",
       speed: 1,
-      exitPreset: "paint-swipe",
+      exitPreset: "black-friday-lift",
       logo: {
         position: "top-left",
-        size: 72,
-        sectorText: "AÇOUGUE",
-        sectorTextColor: "#111111",
-        sectorTextSize: 13,
+        size: 156,
+        sectorText: "",
+        sectorTextColor: "#f2c94c",
+        sectorTextSize: 8,
         sectorLayout: "column",
+        offsetX: -516,
+        offsetY: 178,
+        sectorOffsetX: -198,
+        sectorOffsetY: -800,
+        visible: true,
+      },
+      subtitle: {
+        text: "Qualidade para o seu dia.",
+        fontSize: 40,
+        offsetX: -293,
+        offsetY: -74,
+        color: "#111111",
+        visible: true,
+        showBrush: true,
       },
       badge: {
-        type: "text",
-        text: "BLACK FRIDAY",
-        size: 70,
+        text: "",
         rotation: 3.5,
-        background: "#111111",
-        color: "#ffffff",
+        background: "#e21b2d",
+        offsetX: 231,
+        offsetY: 368,
+        size: 410,
+        type: "text",
+        visible: false,
       },
       background: {
         type: "solid",
@@ -92,12 +108,12 @@ export const DEFAULT_PRESETS: readonly MotionPreset[] = Object.freeze([
       },
       pricePhysics: {
         impact: "impact",
-        shimmer: false,
-        shimmerColor: "white",
+        shimmer: true,
+        shimmerColor: "gold",
       },
       ambient: {
         speed: 18,
-        opacity: 30,
+        opacity: 55,
       },
       paintSwipe: {
         direction: "left-to-right",
@@ -105,6 +121,10 @@ export const DEFAULT_PRESETS: readonly MotionPreset[] = Object.freeze([
         speed: "normal",
       },
       fx: {
+        brushCorners: {
+          enabled: true,
+          opacity: 100,
+        },
         balloons: {
           enabled: false,
           count: 2,
@@ -116,14 +136,14 @@ export const DEFAULT_PRESETS: readonly MotionPreset[] = Object.freeze([
           position: "top-right",
         },
         paintStrokes: {
-          enabled: true,
+          enabled: false,
           variant: "corners",
         },
         strikeAnimation: {
           enabled: true,
         },
         stamp: {
-          enabled: true,
+          enabled: false,
           text: "OFERTA REAL",
           position: "bottom-right",
         },
@@ -139,13 +159,90 @@ export const DEFAULT_PRESETS: readonly MotionPreset[] = Object.freeze([
         },
       },
       colorOverrides: {
-        enabled: false,
+        enabled: true,
+        productName: "#ffffff",
+        strikeColor: "#000000",
+        background: "#000000",
+        price: "#ec6f09",
+        currency: "#ec6f09",
+        unit: "#ec6f09",
+        oldPrice: "#666666",
+        capsuleBg: "#000000",
+        capsuleText: "#ffffff",
+        sectorText: "#000000",
+        badgeBg: "#000000",
+        badgeText: "#ffffff",
       },
       elementAnimations: {
         nameAnimation: "slide-up",
         priceAnimation: "impact",
         imageAnimation: "float",
         choreography: "staggered",
+      },
+      layoutTuning: {
+        hero: {
+          productName: {
+            fontSizeOffset: -42,
+            x: 278,
+            y: -7,
+          },
+          oldPrice: {
+            x: 289,
+            y: 29,
+          },
+          productImage: {
+            scale: 0.85,
+            x: 31,
+            y: 26,
+          },
+          promotionalPrice: {
+            fontSizeOffset: 32,
+            x: 276,
+            y: 48,
+          },
+        },
+        duo: {
+          productImage: {
+            x: -10,
+            y: -9,
+            scale: 0.85,
+          },
+        },
+        trio: {
+          productImage: {
+            scale: 1,
+            x: -44,
+            y: 39,
+          },
+        },
+        grid4: {
+          productImage: {
+            x: -43,
+            y: 0,
+            scale: 1.3,
+          },
+        },
+        grid8: {
+          productImage: {
+            x: 28,
+            y: 18,
+            scale: 1.2,
+          },
+          promotionalPrice: {
+            x: -18,
+            y: 76,
+            fontSizeOffset: 8,
+          },
+          oldPrice: {
+            x: -17,
+            y: 68,
+          },
+          productName: {
+            fontSizeOffset: 18,
+            x: -4,
+            y: 64,
+          },
+        },
       },
     },
   },

@@ -135,6 +135,8 @@ export function synthesizeCompositionsFromOffers(offers: Offer[]): OfferComposit
       resolvedLayout = "grid8";
     } else if (available.length >= 4 && targetCapacity >= 4) {
       resolvedLayout = "grid4";
+    } else if (available.length >= 3 && targetCapacity === 3) {
+      resolvedLayout = "trio";
     } else if (available.length >= 2 && targetCapacity >= 2) {
       resolvedLayout = "duo";
     } else {

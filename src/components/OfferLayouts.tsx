@@ -24,6 +24,10 @@ export function DuoOfferLayout({ children }: OfferLayoutProps) {
   return <OfferLayoutFrame layout="duo">{children}</OfferLayoutFrame>;
 }
 
+export function TrioOfferLayout({ children }: OfferLayoutProps) {
+  return <OfferLayoutFrame layout="trio">{children}</OfferLayoutFrame>;
+}
+
 export function Grid4OfferLayout({ children }: OfferLayoutProps) {
   return <OfferLayoutFrame layout="grid4">{children}</OfferLayoutFrame>;
 }
@@ -37,6 +41,7 @@ export const OFFER_LAYOUT_COMPONENTS: Readonly<
 > = Object.freeze({
   hero: HeroOfferLayout,
   duo: DuoOfferLayout,
+  trio: TrioOfferLayout,
   grid4: Grid4OfferLayout,
   grid8: Grid8OfferLayout,
 });

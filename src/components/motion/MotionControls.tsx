@@ -18,6 +18,12 @@ import {
   Sliders,
   Wand2,
   Type,
+  Copy,
+  Check,
+  Move,
+  Maximize2,
+  Minimize2,
+  Eye,
 } from "lucide-react";
 import { OFFER_LAYOUTS, type OfferLayout } from "../../offers/layouts";
 import { themeRegistry } from "../../themes/registry";
@@ -44,13 +50,27 @@ import type {
   ShimmerColor,
   StampPosition,
   ThemeColorOverrides,
+  PerLayoutTuning,
+  LayoutElementConfig,
+  VisualElementsVisibility,
+  MotionBlackFridayImageConfig,
+  BlackFridayAnimationPreset,
+  BlackFridayEntryAnimationPreset,
+  BlackFridayIdleAnimationPreset,
+  MotionFireSparksConfig,
+  FireSparksIntensity,
+  FireSparksPerformance,
 } from "../../motion/types";
-import { DEFAULT_MOTION_CONFIG } from "../../motion/defaults";
+import { DEFAULT_MOTION_CONFIG, DEFAULT_BLACK_FRIDAY_IMAGE, DEFAULT_FIRE_SPARKS_CONFIG } from "../../motion/defaults";
+import { formatCompleteTuningExport } from "../../motion/layoutTuningFormatter";
+import { removeWhiteBackground } from "../../images/removeWhiteBackground";
+import { uploadMediaFile, databaseConfigured } from "../../supabase";
 
 export type MotionControlsProps = {
   config: MotionConfig;
   onChange: (updater: (prev: MotionConfig) => MotionConfig) => void;
   onReplay: () => void;
+  sector?: string;
 };
 
 const AVAILABLE_THEMES = Object.values(themeRegistry);
@@ -117,10 +137,15 @@ const GRADIENT_PRESETS = [
   },
 ];
 
-export function MotionControls({ config, onChange, onReplay }: MotionControlsProps) {
+export function MotionControls({ config, onChange, onReplay, sector = "acougue" }: MotionControlsProps) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    layoutTuning: true,
+    visibility: true,
+    fireSparks: true,
     cartazColors: true,
     blackFridayFx: true,
+    blackFridayImage: true,
+    videoOverlay: false,
     elementAnimations: false,
     background: false,
     productCard: false,
@@ -133,15 +158,254 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
     theme: false,
   });
 
+  const [activeLayoutTuningTab, setActiveLayoutTuningTab] = useState<
+    "image" | "name" | "price" | "oldPrice" | "columns"
+  >("image");
+  const [activeBfImageTab, setActiveBfImageTab] = useState<
+    "content" | "style" | "animation"
+  >("content");
+  const [bgRemovalTolerance, setBgRemovalTolerance] = useState<number>(30);
+  const [isRemovingBg, setIsRemovingBg] = useState<boolean>(false);
+  const [bgRemovalError, setBgRemovalError] = useState<string | null>(null);
+  const [isUploadingBfImage, setIsUploadingBfImage] = useState<boolean>(false);
+  const [bfUploadError, setBfUploadError] = useState<string | null>(null);
+  const [bfUploadSuccess, setBfUploadSuccess] = useState<string | null>(null);
+  const [tuningCopied, setTuningCopied] = useState<boolean>(false);
+
+  // Logo background removal state
+  const [logoBgTolerance, setLogoBgTolerance] = useState<number>(30);
+  const [isRemovingLogoBg, setIsRemovingLogoBg] = useState<boolean>(false);
+  const [logoBgRemovalError, setLogoBgRemovalError] = useState<string | null>(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState<boolean>(false);
+  const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
+  const [logoUploadSuccess, setLogoUploadSuccess] = useState<string | null>(null);
+
+  const activeLayout = config.layout || "hero";
+  const currentTuning = config.layoutTuning?.[activeLayout] || {};
+
+  const updateLayoutTuning = (
+    updater: (prev: PerLayoutTuning) => PerLayoutTuning
+  ) => {
+    onChange((prev) => {
+      const currentTunings = prev.layoutTuning || {};
+      const layoutTuning = currentTunings[activeLayout] || {};
+      const updated = updater(layoutTuning);
+      return {
+        ...prev,
+        layoutTuning: {
+          ...currentTunings,
+          [activeLayout]: updated,
+        },
+      };
+    });
+  };
+
+  const resetCurrentLayoutTuning = () => {
+    onChange((prev) => {
+      const currentTunings = { ...(prev.layoutTuning || {}) };
+      delete currentTunings[activeLayout];
+      return {
+        ...prev,
+        layoutTuning: currentTunings,
+      };
+    });
+  };
+
+  const copyLayoutConfig = () => {
+    const text = formatCompleteTuningExport(
+      activeLayout,
+      config.layoutTuning?.[activeLayout],
+      config.layoutTuning
+    );
+    void navigator.clipboard.writeText(text);
+    setTuningCopied(true);
+    setTimeout(() => setTuningCopied(false), 2600);
+  };
+
   const logoFileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const badgeFileInputRef = useRef<HTMLInputElement>(null);
+  const bfImageFileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSection = (section: string) => {
     setOpenSections((prev) => ({
       ...prev,
       [section]: !prev[section],
     }));
+  };
+
+  const updateBlackFridayImage = (
+    patch:
+      | Partial<MotionBlackFridayImageConfig>
+      | ((prev: MotionBlackFridayImageConfig) => MotionBlackFridayImageConfig)
+  ) => {
+    onChange((prev) => {
+      const current = prev.blackFridayImage || DEFAULT_BLACK_FRIDAY_IMAGE;
+      const updated = typeof patch === "function" ? patch(current) : { ...current, ...patch };
+      return {
+        ...prev,
+        blackFridayImage: updated,
+      };
+    });
+  };
+
+  const updateVideoOverlay = (
+    patch:
+      | Partial<NonNullable<MotionConfig["videoOverlay"]>>
+      | ((prev: NonNullable<MotionConfig["videoOverlay"]>) => NonNullable<MotionConfig["videoOverlay"]>)
+  ) => {
+    onChange((prev) => {
+      const current = prev.videoOverlay || {
+        enabled: true,
+        logo: {
+          visible: prev.logo.visible,
+          size: prev.logo.size,
+          position: "custom",
+          x: prev.logo.x ?? 4,
+          y: prev.logo.y ?? 4,
+          scale: prev.logo.scale ?? 1,
+          opacity: prev.logo.opacity ?? 100,
+        },
+        blackFridayImage: {
+          visible: prev.blackFridayImage?.visible ?? true,
+          x: prev.blackFridayImage?.x ?? 82,
+          y: prev.blackFridayImage?.y ?? 6,
+          width: prev.blackFridayImage?.width ?? 18,
+          scale: prev.blackFridayImage?.scale ?? 1,
+          rotation: prev.blackFridayImage?.rotation ?? 0,
+          opacity: prev.blackFridayImage?.opacity ?? 100,
+        },
+      };
+      const updated = typeof patch === "function" ? patch(current) : { ...current, ...patch };
+      return {
+        ...prev,
+        videoOverlay: updated,
+      };
+    });
+  };
+
+  const updateFireSparks = (
+    patch:
+      | Partial<MotionFireSparksConfig>
+      | ((prev: MotionFireSparksConfig) => MotionFireSparksConfig)
+  ) => {
+    onChange((prev) => {
+      const current =
+        prev.fx?.fireSparks || prev.fireSparks || DEFAULT_FIRE_SPARKS_CONFIG;
+      const updated =
+        typeof patch === "function" ? patch(current) : { ...current, ...patch };
+      return {
+        ...prev,
+        fireSparks: updated,
+        fx: {
+          ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
+          fireSparks: updated,
+        },
+      };
+    });
+  };
+
+  const handleBfImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // 1. Instant local preview (lightweight blob URL, 0 lag, zero base64 payload)
+    const previewUrl = URL.createObjectURL(file);
+    updateBlackFridayImage({
+      src: previewUrl,
+      originalSrc: previewUrl,
+      visible: true,
+      removeBackground: false,
+    });
+    setBgRemovalError(null);
+    setBfUploadError(null);
+    setBfUploadSuccess(null);
+    setIsUploadingBfImage(true);
+
+    // 2. Upload to Supabase Storage if configured
+    if (databaseConfigured) {
+      try {
+        const res = await uploadMediaFile(file, sector);
+        if (res.publicUrl) {
+          updateBlackFridayImage({
+            src: res.publicUrl,
+            originalSrc: res.publicUrl,
+          });
+          setBfUploadSuccess("Imagem salva no banco/nuvem com sucesso!");
+          setTimeout(() => setBfUploadSuccess(null), 4000);
+        }
+      } catch (err: any) {
+        console.error("[MotionLab] Upload para Supabase Storage falhou:", err);
+        const isPolicyError = err?.message?.includes("policy") || err?.statusCode === "403" || err?.status === 403;
+        setBfUploadError(
+          isPolicyError
+            ? "Permissão de gravação no Storage não configurada. Execute 'database/tv_media_storage.sql' no Supabase."
+            : (err?.message || "Falha ao gravar arquivo no Supabase Storage.")
+        );
+      } finally {
+        setIsUploadingBfImage(false);
+      }
+    } else {
+      setIsUploadingBfImage(false);
+    }
+  };
+
+  const handleRemoveBg = async () => {
+    const src = config.blackFridayImage?.src;
+    if (!src) return;
+    setIsRemovingBg(true);
+    setBgRemovalError(null);
+    setBfUploadError(null);
+    try {
+      const blob = await removeWhiteBackground(src, bgRemovalTolerance);
+      const transparentPreviewUrl = URL.createObjectURL(blob);
+      updateBlackFridayImage((prev) => ({
+        ...prev,
+        src: transparentPreviewUrl,
+        originalSrc: prev.originalSrc || prev.src,
+        removeBackground: true,
+      }));
+
+      if (databaseConfigured) {
+        const transparentFile = new File([blob], `bf-transparent-${Date.now()}.png`, { type: "image/png" });
+        try {
+          const res = await uploadMediaFile(transparentFile, sector);
+          if (res.publicUrl) {
+            updateBlackFridayImage((prev) => ({
+              ...prev,
+              src: res.publicUrl,
+            }));
+            setBfUploadSuccess("Imagem sem fundo salva no banco/nuvem!");
+            setTimeout(() => setBfUploadSuccess(null), 4000);
+          }
+        } catch (uploadErr: any) {
+          console.warn("[MotionLab] Upload de imagem transparente para Supabase Storage falhou:", uploadErr);
+        }
+      }
+    } catch (err: any) {
+      setBgRemovalError(err.message || "Não foi possível remover o fundo.");
+    } finally {
+      setIsRemovingBg(false);
+    }
+  };
+
+  const handleRestoreOriginal = () => {
+    if (config.blackFridayImage?.originalSrc) {
+      updateBlackFridayImage({
+        src: config.blackFridayImage.originalSrc,
+        originalSrc: "",
+        removeBackground: false,
+      });
+      setBgRemovalError(null);
+    }
+  };
+
+  const handleResetToDefaultBadge = () => {
+    updateBlackFridayImage({
+      src: "",
+      originalSrc: "",
+      removeBackground: false,
+    });
   };
 
   const updateLogo = (patch: Partial<MotionConfig["logo"]>) => {
@@ -180,6 +444,16 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
     onReplay();
   };
 
+  const updateSubtitle = (patch: Partial<NonNullable<MotionConfig["subtitle"]>>) => {
+    onChange((prev) => ({
+      ...prev,
+      subtitle: {
+        ...(prev.subtitle || DEFAULT_MOTION_CONFIG.subtitle || { text: "Qualidade para o seu dia.", fontSize: 22, visible: true }),
+        ...patch,
+      },
+    }));
+  };
+
   const updateAmbient = (patch: Partial<MotionConfig["ambient"]>) => {
     onChange((prev) => ({
       ...prev,
@@ -190,8 +464,12 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
   const updateFx = (patch: Partial<NonNullable<MotionConfig["fx"]>>) => {
     onChange((prev) => ({
       ...prev,
-      fx: { ...(prev.fx || DEFAULT_MOTION_CONFIG.fx || {}), ...patch },
+      fx: {
+        ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
+        ...patch,
+      },
     }));
+    onReplay();
   };
 
   const updateColorOverrides = (patch: Partial<NonNullable<MotionConfig["colorOverrides"]>>) => {
@@ -200,6 +478,16 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
       colorOverrides: {
         ...(prev.colorOverrides || {}),
         enabled: true,
+        ...patch,
+      },
+    }));
+  };
+
+  const updateVisibility = (patch: Partial<VisualElementsVisibility>) => {
+    onChange((prev) => ({
+      ...prev,
+      visibility: {
+        ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
         ...patch,
       },
     }));
@@ -237,44 +525,144 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
     onReplay();
   };
 
-  // Handlers for Local File Uploads (PNG/JPG -> Data URL)
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handlers for Local Logo Upload & Background Removal
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        updateLogo({ image: dataUrl });
+
+    // 1. Instant local preview (lightweight blob URL)
+    const previewUrl = URL.createObjectURL(file);
+    updateLogo({
+      image: previewUrl,
+      originalImage: previewUrl,
+      removeBackground: false,
+    });
+    setLogoBgRemovalError(null);
+    setLogoUploadError(null);
+    setLogoUploadSuccess(null);
+    setIsUploadingLogo(true);
+
+    // 2. Upload to Supabase Storage if configured
+    if (databaseConfigured) {
+      try {
+        const res = await uploadMediaFile(file, sector);
+        if (res.publicUrl) {
+          updateLogo({
+            image: res.publicUrl,
+            originalImage: res.publicUrl,
+          });
+          setLogoUploadSuccess("Logo salva no banco/nuvem com sucesso!");
+          setTimeout(() => setLogoUploadSuccess(null), 4000);
+        }
+      } catch (err: any) {
+        console.error("[MotionLab] Upload da logo para Supabase Storage falhou:", err);
+        setLogoUploadError(err?.message || "Falha ao gravar logo no Storage.");
+      } finally {
+        setIsUploadingLogo(false);
       }
-    };
-    reader.readAsDataURL(file);
+    } else {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  const handleRemoveLogoBg = async () => {
+    const src = config.logo.image;
+    if (!src) return;
+    setIsRemovingLogoBg(true);
+    setLogoBgRemovalError(null);
+    setLogoUploadError(null);
+    try {
+      const blob = await removeWhiteBackground(src, logoBgTolerance);
+      const transparentPreviewUrl = URL.createObjectURL(blob);
+      updateLogo({
+        image: transparentPreviewUrl,
+        originalImage: config.logo.originalImage || config.logo.image,
+        removeBackground: true,
+      });
+
+      if (databaseConfigured) {
+        const transparentFile = new File([blob], `logo-transparent-${Date.now()}.png`, { type: "image/png" });
+        try {
+          const res = await uploadMediaFile(transparentFile, sector);
+          if (res.publicUrl) {
+            updateLogo({
+              image: res.publicUrl,
+            });
+            setLogoUploadSuccess("Logo sem fundo salva no banco/nuvem!");
+            setTimeout(() => setLogoUploadSuccess(null), 4000);
+          }
+        } catch (uploadErr: any) {
+          console.warn("[MotionLab] Upload da logo transparente para Supabase Storage falhou:", uploadErr);
+        }
+      }
+    } catch (err: any) {
+      setLogoBgRemovalError(err.message || "Não foi possível remover o fundo da logo.");
+    } finally {
+      setIsRemovingLogoBg(false);
+    }
+  };
+
+  const handleRestoreOriginalLogo = () => {
+    if (config.logo.originalImage) {
+      updateLogo({
+        image: config.logo.originalImage,
+        originalImage: "",
+        removeBackground: false,
+      });
+      setLogoBgRemovalError(null);
+    }
+  };
+
+  const handleResetToDefaultSolLogo = () => {
+    updateLogo({
+      image: undefined,
+      originalImage: undefined,
+      removeBackground: false,
+    });
   };
 
   const handleBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        updateBackground({ type: "image", imageUrl: dataUrl });
-      }
-    };
-    reader.readAsDataURL(file);
+
+    // 1. Instant local preview (lightweight blob URL)
+    const previewUrl = URL.createObjectURL(file);
+    updateBackground({ type: "image", imageUrl: previewUrl });
+
+    // 2. Upload to Supabase Storage if configured
+    if (databaseConfigured) {
+      void uploadMediaFile(file, sector)
+        .then((res) => {
+          if (res.publicUrl) {
+            updateBackground({ type: "image", imageUrl: res.publicUrl });
+          }
+        })
+        .catch((err) => {
+          console.warn("[MotionLab] Upload do fundo para Supabase Storage falhou, mantendo preview:", err);
+        });
+    }
   };
 
   const handleBadgeImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        updateBadge({ type: "image", image: dataUrl });
-      }
-    };
-    reader.readAsDataURL(file);
+
+    // 1. Instant local preview (lightweight blob URL)
+    const previewUrl = URL.createObjectURL(file);
+    updateBadge({ type: "image", image: previewUrl });
+
+    // 2. Upload to Supabase Storage if configured
+    if (databaseConfigured) {
+      void uploadMediaFile(file, sector)
+        .then((res) => {
+          if (res.publicUrl) {
+            updateBadge({ type: "image", image: res.publicUrl });
+          }
+        })
+        .catch((err) => {
+          console.warn("[MotionLab] Upload da tag/selo para Supabase Storage falhou, mantendo preview:", err);
+        });
+    }
   };
 
   const fx = config.fx || DEFAULT_MOTION_CONFIG.fx || {};
@@ -289,6 +677,665 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
       </div>
 
       <div className="controls-accordion-list">
+        {/* SEÇÃO 0: AJUSTE INTERATIVO DE LAYOUTS (1, 2, 3, 4 PRODUTOS) */}
+        <div className={`accordion-item ${openSections.layoutTuning ? "open" : ""}`}>
+          <button
+            type="button"
+            className="accordion-header"
+            onClick={() => toggleSection("layoutTuning")}
+            style={{ borderLeft: "3px solid var(--accent)" }}
+          >
+            <div className="accordion-header-title">
+              <Sliders size={15} className="accordion-icon" style={{ color: "var(--accent)" }} />
+              <span style={{ color: "var(--accent)", fontWeight: 800 }}>
+                Ajuste Fino de Layouts ({activeLayout.toUpperCase()})
+              </span>
+            </div>
+            {openSections.layoutTuning ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+
+          {openSections.layoutTuning && (
+            <div className="accordion-body">
+              {/* 1. Escolha do Layout de Teste */}
+              <div className="control-field">
+                <span className="control-label-mini">Layout Selecionado para Teste & Ajuste:</span>
+                <div className="segmented-grid-layouts" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+                  {[
+                    { id: "hero", label: "1 Prod (Hero)" },
+                    { id: "duo", label: "2 Prods (Duo)" },
+                    { id: "trio", label: "3 Prods (Trio)" },
+                    { id: "grid4", label: "4 Prods (Grid 4)" },
+                    { id: "grid8", label: "8 Prods (Grid 8)" },
+                  ].map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      className={`layout-pill-btn ${activeLayout === l.id ? "active" : ""}`}
+                      onClick={() => {
+                        onChange((prev) => ({ ...prev, layout: l.id as OfferLayout }));
+                        onReplay();
+                      }}
+                    >
+                      <strong>{l.label}</strong>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Abas de Elemento */}
+              <div className="control-field" style={{ marginTop: "12px" }}>
+                <span className="control-label-mini">Elemento a Customizar ({activeLayout.toUpperCase()}):</span>
+                <div className="segmented-group" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "4px" }}>
+                  <button
+                    type="button"
+                    className={activeLayoutTuningTab === "image" ? "active" : ""}
+                    onClick={() => setActiveLayoutTuningTab("image")}
+                  >
+                    <ImageIcon size={12} /> Foto
+                  </button>
+                  <button
+                    type="button"
+                    className={activeLayoutTuningTab === "name" ? "active" : ""}
+                    onClick={() => setActiveLayoutTuningTab("name")}
+                  >
+                    <Type size={12} /> Nome
+                  </button>
+                  <button
+                    type="button"
+                    className={activeLayoutTuningTab === "price" ? "active" : ""}
+                    onClick={() => setActiveLayoutTuningTab("price")}
+                  >
+                    <DollarSign size={12} /> Preço
+                  </button>
+                  <button
+                    type="button"
+                    className={activeLayoutTuningTab === "oldPrice" ? "active" : ""}
+                    onClick={() => setActiveLayoutTuningTab("oldPrice")}
+                  >
+                    <Tag size={12} /> De: ...
+                  </button>
+                  <button
+                    type="button"
+                    className={activeLayoutTuningTab === "columns" ? "active" : ""}
+                    onClick={() => setActiveLayoutTuningTab("columns")}
+                    style={{ gridColumn: "span 2" }}
+                  >
+                    <LayoutGrid size={12} /> Espaço & Colunas
+                  </button>
+                </div>
+              </div>
+
+              {/* 3. Controles do Elemento Selecionado */}
+              {activeLayoutTuningTab === "image" && (
+                <div className="control-field" style={{ padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", marginTop: "8px" }}>
+                  <label>
+                    Escala da Imagem: <strong>{Math.round(((currentTuning.productImage?.scale ?? 1)) * 100)}%</strong>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="6.0"
+                      step="0.05"
+                      value={currentTuning.productImage?.scale ?? 1}
+                      onChange={(e) =>
+                        updateLayoutTuning((prev) => ({
+                          ...prev,
+                          productImage: {
+                            ...(prev.productImage || {}),
+                            scale: Number(e.target.value),
+                          },
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "8px" }}>
+                    <label>
+                      Posição X: <strong>{currentTuning.productImage?.x || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.productImage?.x || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            productImage: {
+                              ...(prev.productImage || {}),
+                              x: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Posição Y: <strong>{currentTuning.productImage?.y || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.productImage?.y || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            productImage: {
+                              ...(prev.productImage || {}),
+                              y: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {activeLayoutTuningTab === "name" && (
+                <div className="control-field" style={{ padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", marginTop: "8px" }}>
+                  <label>
+                    Tamanho do Nome: <strong>{(currentTuning.productName?.fontSizeOffset ?? 0) >= 0 ? "+" : ""}{currentTuning.productName?.fontSizeOffset ?? 0}px</strong>
+                    <input
+                      type="range"
+                      min="-80"
+                      max="350"
+                      step="1"
+                      value={currentTuning.productName?.fontSizeOffset ?? 0}
+                      onChange={(e) =>
+                        updateLayoutTuning((prev) => ({
+                          ...prev,
+                          productName: {
+                            ...(prev.productName || {}),
+                            fontSizeOffset: Number(e.target.value),
+                          },
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "8px" }}>
+                    <label>
+                      Posição X: <strong>{currentTuning.productName?.x || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.productName?.x || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            productName: {
+                              ...(prev.productName || {}),
+                              x: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Posição Y: <strong>{currentTuning.productName?.y || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.productName?.y || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            productName: {
+                              ...(prev.productName || {}),
+                              y: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {activeLayoutTuningTab === "price" && (
+                <div className="control-field" style={{ padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", marginTop: "8px" }}>
+                  <label>
+                    Tamanho do Preço: <strong>{(currentTuning.promotionalPrice?.fontSizeOffset ?? 0) >= 0 ? "+" : ""}{currentTuning.promotionalPrice?.fontSizeOffset ?? 0}px</strong>
+                    <input
+                      type="range"
+                      min="-80"
+                      max="450"
+                      step="1"
+                      value={currentTuning.promotionalPrice?.fontSizeOffset ?? 0}
+                      onChange={(e) =>
+                        updateLayoutTuning((prev) => ({
+                          ...prev,
+                          promotionalPrice: {
+                            ...(prev.promotionalPrice || {}),
+                            fontSizeOffset: Number(e.target.value),
+                          },
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "8px" }}>
+                    <label>
+                      Posição X: <strong>{currentTuning.promotionalPrice?.x || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.promotionalPrice?.x || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            promotionalPrice: {
+                              ...(prev.promotionalPrice || {}),
+                              x: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Posição Y: <strong>{currentTuning.promotionalPrice?.y || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.promotionalPrice?.y || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            promotionalPrice: {
+                              ...(prev.promotionalPrice || {}),
+                              y: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {activeLayoutTuningTab === "oldPrice" && (
+                <div className="control-field" style={{ padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", marginTop: "8px" }}>
+                  <label>
+                    Tamanho Preço Anterior: <strong>{(currentTuning.oldPrice?.fontSizeOffset ?? 0) >= 0 ? "+" : ""}{currentTuning.oldPrice?.fontSizeOffset ?? 0}px</strong>
+                    <input
+                      type="range"
+                      min="-50"
+                      max="200"
+                      step="1"
+                      value={currentTuning.oldPrice?.fontSizeOffset ?? 0}
+                      onChange={(e) =>
+                        updateLayoutTuning((prev) => ({
+                          ...prev,
+                          oldPrice: {
+                            ...(prev.oldPrice || {}),
+                            fontSizeOffset: Number(e.target.value),
+                          },
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "8px" }}>
+                    <label>
+                      Posição X: <strong>{currentTuning.oldPrice?.x || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.oldPrice?.x || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            oldPrice: {
+                              ...(prev.oldPrice || {}),
+                              x: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Posição Y: <strong>{currentTuning.oldPrice?.y || 0}px</strong>
+                      <input
+                        type="range"
+                        min="-800"
+                        max="800"
+                        step="2"
+                        value={currentTuning.oldPrice?.y || 0}
+                        onChange={(e) =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            oldPrice: {
+                              ...(prev.oldPrice || {}),
+                              y: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {activeLayoutTuningTab === "columns" && (
+                <div className="control-field" style={{ padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", marginTop: "8px" }}>
+                  <label>
+                    Espaço da Foto vs Textos: <strong>{Math.round((currentTuning.columnRatio ?? 0.56) * 100)}% para foto</strong>
+                    <input
+                      type="range"
+                      min="0.20"
+                      max="0.85"
+                      step="0.01"
+                      value={currentTuning.columnRatio ?? 0.56}
+                      onChange={(e) =>
+                        updateLayoutTuning((prev) => ({
+                          ...prev,
+                          columnRatio: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label style={{ marginTop: "8px" }}>
+                    Distância entre Produtos (Gap): <strong>{currentTuning.gap ?? 16}px</strong>
+                    <input
+                      type="range"
+                      min="0"
+                      max="160"
+                      step="2"
+                      value={currentTuning.gap ?? 16}
+                      onChange={(e) =>
+                        updateLayoutTuning((prev) => ({
+                          ...prev,
+                          gap: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label style={{ marginTop: "8px" }}>
+                    Espaço Foto vs Preço (Gap Interno): <strong>{currentTuning.itemGap ?? 10}px</strong>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="2"
+                      value={currentTuning.itemGap ?? 10}
+                      onChange={(e) =>
+                        updateLayoutTuning((prev) => ({
+                          ...prev,
+                          itemGap: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+
+              {/* Botões de Ação */}
+              <div style={{ display: "flex", gap: "8px", marginTop: "14px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ flex: 1 }}
+                  onClick={copyLayoutConfig}
+                >
+                  {tuningCopied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+                  <span>{tuningCopied ? "CSS & JSON Copiados!" : "Copiar Configuração"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={resetCurrentLayoutTuning}
+                  title="Restaurar layout original"
+                >
+                  <RotateCcw size={14} />
+                  <span>Resetar</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        {/* SEÇÃO: ELEMENTOS VISÍVEIS */}
+        <div className={`accordion-item ${openSections.visibility ? "open" : ""}`}>
+          <button
+            type="button"
+            className="accordion-header"
+            onClick={() => toggleSection("visibility")}
+          >
+            <div className="accordion-header-title">
+              <Eye size={15} className="accordion-icon" />
+              <span>Elementos Visíveis na TV</span>
+            </div>
+            {openSections.visibility ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+
+          {openSections.visibility && (
+            <div className="accordion-body">
+              <p className="control-help" style={{ margin: "0 0 10px", fontSize: "11px", color: "var(--muted)" }}>
+                Ative ou desative cada elemento individualmente. Elementos desativados são completamente removidos do layout da TV.
+              </p>
+
+              <div style={{ display: "grid", gap: "8px" }}>
+                <label className="toggle-field">
+                  <span>🏷️ Logo da Loja / Setor</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.logo !== false && config.logo?.visible !== false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      onChange((prev) => ({
+                        ...prev,
+                        visibility: {
+                          ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                          logo: checked,
+                        },
+                        logo: {
+                          ...prev.logo,
+                          visible: checked,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>💬 Slogan / Frase Inferior</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.slogan !== false && config.subtitle?.visible !== false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      onChange((prev) => ({
+                        ...prev,
+                        visibility: {
+                          ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                          slogan: checked,
+                        },
+                        subtitle: {
+                          ...(prev.subtitle || DEFAULT_MOTION_CONFIG.subtitle || { text: "Qualidade para o seu dia.", fontSize: 22, visible: true }),
+                          visible: checked,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>🖌️ Molduras Pretas nos 4 Cantos (Pinceladas)</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.brushCorners !== false && config.fx?.brushCorners?.enabled !== false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      onChange((prev) => ({
+                        ...prev,
+                        visibility: {
+                          ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                          brushCorners: checked,
+                        },
+                        fx: {
+                          ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
+                          brushCorners: {
+                            ...(prev.fx?.brushCorners || { enabled: true, opacity: 100, scale: 1 }),
+                            enabled: checked,
+                          },
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>🖼️ Moldura da TV (Bordas & Sombras Externas)</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.frame !== false}
+                    onChange={(e) => updateVisibility({ frame: e.target.checked })}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>🎨 Decorações do Tema (Selos & Pinceladas)</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.decorations !== false}
+                    onChange={(e) => updateVisibility({ decorations: e.target.checked })}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>✨ Faíscas de Fogo / Queima de Estoque</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.fireSparks !== false && (config.fx?.fireSparks?.enabled || config.fireSparks?.enabled) !== false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      onChange((prev) => ({
+                        ...prev,
+                        visibility: {
+                          ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                          fireSparks: checked,
+                        },
+                        fireSparks: {
+                          ...(prev.fireSparks || prev.fx?.fireSparks || DEFAULT_FIRE_SPARKS_CONFIG),
+                          enabled: checked,
+                        },
+                        fx: {
+                          ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
+                          fireSparks: {
+                            ...(prev.fx?.fireSparks || prev.fireSparks || DEFAULT_FIRE_SPARKS_CONFIG),
+                            enabled: checked,
+                          },
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>🔥 Imagem / Logo Black Friday</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.blackFridayImage !== false && config.blackFridayImage?.visible !== false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      onChange((prev) => ({
+                        ...prev,
+                        visibility: {
+                          ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                          blackFridayImage: checked,
+                        },
+                        blackFridayImage: {
+                          ...(prev.blackFridayImage || DEFAULT_BLACK_FRIDAY_IMAGE),
+                          visible: checked,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>🏅 Selo da Oferta / Tag</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.badge !== false && config.badge?.visible !== false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      onChange((prev) => ({
+                        ...prev,
+                        visibility: {
+                          ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                          badge: checked,
+                        },
+                        badge: {
+                          ...prev.badge,
+                          visible: checked,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>💰 Preço Anterior ("De: R$ ...")</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.oldPrice !== false}
+                    onChange={(e) => updateVisibility({ oldPrice: e.target.checked })}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>📏 Unidade de Medida ("/kg", "/un")</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.unit !== false}
+                    onChange={(e) => updateVisibility({ unit: e.target.checked })}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>📝 Nome do Produto</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.productName !== false}
+                    onChange={(e) => updateVisibility({ productName: e.target.checked })}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>💲 Preço Promocional</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.productPrice !== false}
+                    onChange={(e) => updateVisibility({ productPrice: e.target.checked })}
+                  />
+                </label>
+
+                <label className="toggle-field">
+                  <span>📸 Imagem do Produto</span>
+                  <input
+                    type="checkbox"
+                    checked={config.visibility?.productImage !== false}
+                    onChange={(e) => updateVisibility({ productImage: e.target.checked })}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* A. SEÇÃO: CORES DO CARTAZ (PERSONALIZAÇÃO INDIVIDUAL & PRESETS) */}
         <div className={`accordion-item ${openSections.cartazColors ? "open" : ""}`}>
           <button
@@ -298,7 +1345,7 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
           >
             <div className="accordion-header-title">
               <Palette size={15} className="accordion-icon" />
-              <span>Cores do Cartaz (Black Friday)</span>
+              <span>Cores & Tipografia do Cartaz</span>
             </div>
             {openSections.cartazColors ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
@@ -310,13 +1357,42 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                 <div className="segmented-grid-layouts" style={{ gridTemplateColumns: "1fr" }}>
                   <button
                     type="button"
-                    className={`layout-pill-btn ${!co.enabled || co.background === "#F7F6F2" ? "active" : ""}`}
+                    className={`layout-pill-btn ${co.background === "#000000" && co.productName === "#ffffff" ? "active" : ""}`}
+                    onClick={() => {
+                      updateColorOverrides({
+                        enabled: true,
+                        background: "#000000",
+                        productName: "#ffffff",
+                        price: "#F2381E",
+                        priceCents: "#F2381E",
+                        currency: "#ffffff",
+                        unit: "#ffffff",
+                        oldPrice: "#888888",
+                        strikeColor: "#F2381E",
+                        capsuleBg: "#F2381E",
+                        capsuleText: "#ffffff",
+                        sectorText: "#ffffff",
+                        badgeBg: "#F2381E",
+                        badgeText: "#ffffff",
+                        priceShadow: "none",
+                      });
+                      updateBackground({ type: "solid", color: "#000000" });
+                    }}
+                  >
+                    <strong>🖤 Black Friday Preto Sólido (100% Puro)</strong>
+                    <small>Fundo #000000 puro sem textura ou manchas · Texto Branco · Preço Vermelho</small>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`layout-pill-btn ${!co.enabled || (co.background === "#F7F6F2" && co.productName === "#111111") ? "active" : ""}`}
                     onClick={() => {
                       updateColorOverrides({
                         enabled: true,
                         background: "#F7F6F2",
                         productName: "#111111",
                         price: "#F2381E",
+                        priceCents: "#F2381E",
                         currency: "#111111",
                         unit: "#111111",
                         oldPrice: "#444444",
@@ -326,7 +1402,9 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                         sectorText: "#111111",
                         badgeBg: "#111111",
                         badgeText: "#ffffff",
+                        priceShadow: "none",
                       });
+                      updateBackground({ type: "solid", color: "#F7F6F2" });
                     }}
                   >
                     <strong>Cartaz Original (Padrão Aprovado)</strong>
@@ -342,6 +1420,7 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                         background: "#FFFFFF",
                         productName: "#000000",
                         price: "#000000",
+                        priceCents: "#000000",
                         currency: "#000000",
                         unit: "#000000",
                         oldPrice: "#666666",
@@ -351,7 +1430,9 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                         sectorText: "#000000",
                         badgeBg: "#000000",
                         badgeText: "#ffffff",
+                        priceShadow: "none",
                       });
+                      updateBackground({ type: "solid", color: "#FFFFFF" });
                     }}
                   >
                     <strong>Black & White Puro</strong>
@@ -367,6 +1448,7 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                         background: "#FFF5F5",
                         productName: "#111111",
                         price: "#E60000",
+                        priceCents: "#E60000",
                         currency: "#E60000",
                         unit: "#111111",
                         oldPrice: "#555555",
@@ -376,7 +1458,9 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                         sectorText: "#E60000",
                         badgeBg: "#E60000",
                         badgeText: "#ffffff",
+                        priceShadow: "none",
                       });
+                      updateBackground({ type: "solid", color: "#FFF5F5" });
                     }}
                   >
                     <strong>Red Impact</strong>
@@ -405,7 +1489,10 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                     type="color"
                     className="color-picker-input"
                     value={co.background || "#F7F6F2"}
-                    onChange={(e) => updateColorOverrides({ background: e.target.value })}
+                    onChange={(e) => {
+                      updateColorOverrides({ background: e.target.value });
+                      updateBackground({ type: "solid", color: e.target.value });
+                    }}
                   />
                   <span className="color-hex-text">{co.background || "#F7F6F2"}</span>
                 </div>
@@ -425,7 +1512,7 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
               </div>
 
               <div className="control-field">
-                <span className="control-label-mini">Preço Promocional:</span>
+                <span className="control-label-mini">Preço Inteiro:</span>
                 <div className="color-picker-row">
                   <input
                     type="color"
@@ -438,20 +1525,59 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
               </div>
 
               <div className="control-field">
-                <span className="control-label-mini">Cifrão (R$) & Unidade (/kg):</span>
+                <span className="control-label-mini">Centavos (,00):</span>
+                <div className="color-picker-row">
+                  <input
+                    type="color"
+                    className="color-picker-input"
+                    value={co.priceCents || co.price || "#F2381E"}
+                    onChange={(e) => updateColorOverrides({ priceCents: e.target.value })}
+                  />
+                  <span className="color-hex-text">{co.priceCents || co.price || "#F2381E"}</span>
+                </div>
+              </div>
+
+              <div className="control-field">
+                <span className="control-label-mini">Cifrão (R$):</span>
                 <div className="color-picker-row">
                   <input
                     type="color"
                     className="color-picker-input"
                     value={co.currency || "#111111"}
-                    onChange={(e) => updateColorOverrides({ currency: e.target.value, unit: e.target.value })}
+                    onChange={(e) => updateColorOverrides({ currency: e.target.value })}
                   />
                   <span className="color-hex-text">{co.currency || "#111111"}</span>
                 </div>
               </div>
 
               <div className="control-field">
-                <span className="control-label-mini">Traço Cortando o Preço Antigo:</span>
+                <span className="control-label-mini">Unidade de Medida (/kg, /un):</span>
+                <div className="color-picker-row">
+                  <input
+                    type="color"
+                    className="color-picker-input"
+                    value={co.unit || "#111111"}
+                    onChange={(e) => updateColorOverrides({ unit: e.target.value })}
+                  />
+                  <span className="color-hex-text">{co.unit || "#111111"}</span>
+                </div>
+              </div>
+
+              <div className="control-field">
+                <span className="control-label-mini">Preço Anterior ("De:"):</span>
+                <div className="color-picker-row">
+                  <input
+                    type="color"
+                    className="color-picker-input"
+                    value={co.oldPrice || "#444444"}
+                    onChange={(e) => updateColorOverrides({ oldPrice: e.target.value })}
+                  />
+                  <span className="color-hex-text">{co.oldPrice || "#444444"}</span>
+                </div>
+              </div>
+
+              <div className="control-field">
+                <span className="control-label-mini">Traço Cortando o Preço Anterior:</span>
                 <div className="color-picker-row">
                   <input
                     type="color"
@@ -461,6 +1587,20 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                   />
                   <span className="color-hex-text">{co.strikeColor || "#F2381E"}</span>
                 </div>
+              </div>
+
+              <div className="control-field">
+                <span className="control-label-mini">Efeito de Sombra / Halo do Preço:</span>
+                <select
+                  className="control-select"
+                  value={co.priceShadow || "none"}
+                  onChange={(e) => updateColorOverrides({ priceShadow: e.target.value })}
+                >
+                  <option value="none">Sem sombra (100% Plano / Fundo Limpo)</option>
+                  <option value="0 0 45px rgba(242, 201, 76, 0.35)">Halo Dourado / Amarelo</option>
+                  <option value="0 2px 14px rgba(0, 0, 0, 0.9)">Sombra Preta de Contraste</option>
+                  <option value="0 0 35px rgba(242, 56, 30, 0.4)">Glow Vermelho Impact</option>
+                </select>
               </div>
 
               <div className="control-field">
@@ -492,6 +1632,238 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
           )}
         </div>
 
+        {/* SEÇÃO: FAÍSCAS DE FOGO / QUEIMA DE ESTOQUE */}
+        <div className={`accordion-item ${openSections.fireSparks ? "open" : ""}`}>
+          <button
+            type="button"
+            className="accordion-header"
+            onClick={() => toggleSection("fireSparks")}
+          >
+            <div className="accordion-header-title">
+              <Flame size={15} className="accordion-icon" style={{ color: "#ff5a00" }} />
+              <span>🔥 Faíscas de Queima de Estoque</span>
+            </div>
+            {openSections.fireSparks ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+
+          {openSections.fireSparks && (
+            <div className="accordion-body">
+              <p className="control-help" style={{ margin: "0 0 10px", fontSize: "11px", color: "var(--muted)" }}>
+                Efeito cinematográfico de brasas e faíscas subindo na tela. Otimizado para aceleração por GPU em Smart TVs.
+              </p>
+
+              {/* 1. Toggle Principal */}
+              <label className="toggle-field" style={{ marginBottom: "12px" }}>
+                <span>🔥 Ativar Faíscas de Fogo na TV</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(config.fx?.fireSparks?.enabled || config.fireSparks?.enabled)}
+                  onChange={(e) => updateFireSparks({ enabled: e.target.checked })}
+                />
+              </label>
+
+              {(config.fx?.fireSparks?.enabled || config.fireSparks?.enabled) && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {/* 2. Presets Rápidos */}
+                  <div className="control-field">
+                    <span className="control-label-mini">Presets de Intensidade:</span>
+                    <div className="segmented-group" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "4px" }}>
+                      {[
+                        { id: "subtle", label: "Sutil", desc: "16 brasas leves" },
+                        { id: "commercial", label: "Comercial", desc: "26 faíscas balanceadas" },
+                        { id: "fire-sale", label: "Queima Total", desc: "38 faíscas + glow" },
+                      ].map((p) => {
+                        const currentIntensity =
+                          config.fx?.fireSparks?.intensity ||
+                          config.fireSparks?.intensity ||
+                          "commercial";
+                        const isActive = currentIntensity === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className={isActive ? "active" : ""}
+                            onClick={() => {
+                              if (p.id === "subtle") {
+                                updateFireSparks({
+                                  intensity: "subtle",
+                                  particleCount: 16,
+                                  speed: 0.85,
+                                  size: 0.8,
+                                  bottomGlow: true,
+                                  bottomGlowOpacity: 16,
+                                  maxHeight: 90,
+                                });
+                              } else if (p.id === "commercial") {
+                                updateFireSparks({
+                                  intensity: "commercial",
+                                  particleCount: 26,
+                                  speed: 1.0,
+                                  size: 1.0,
+                                  bottomGlow: true,
+                                  bottomGlowOpacity: 25,
+                                  maxHeight: 105,
+                                });
+                              } else {
+                                updateFireSparks({
+                                  intensity: "fire-sale",
+                                  particleCount: 38,
+                                  speed: 1.25,
+                                  size: 1.2,
+                                  bottomGlow: true,
+                                  bottomGlowOpacity: 45,
+                                  maxHeight: 110,
+                                });
+                              }
+                            }}
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 3. Sliders de Ajuste Fino */}
+                  <div style={{ background: "rgba(255,255,255,0.03)", padding: "10px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <label style={{ fontSize: "11px" }}>
+                      Quantidade de Partículas: <strong>{config.fx?.fireSparks?.particleCount ?? config.fireSparks?.particleCount ?? 26} faíscas</strong>
+                      <input
+                        type="range"
+                        min="8"
+                        max="50"
+                        step="2"
+                        value={config.fx?.fireSparks?.particleCount ?? config.fireSparks?.particleCount ?? 26}
+                        onChange={(e) =>
+                          updateFireSparks({
+                            particleCount: Number(e.target.value),
+                            intensity: "custom",
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label style={{ fontSize: "11px", marginTop: "8px" }}>
+                      Velocidade de Subida: <strong>{((config.fx?.fireSparks?.speed ?? config.fireSparks?.speed ?? 1)).toFixed(2)}x</strong>
+                      <input
+                        type="range"
+                        min="0.4"
+                        max="2.5"
+                        step="0.05"
+                        value={config.fx?.fireSparks?.speed ?? config.fireSparks?.speed ?? 1}
+                        onChange={(e) =>
+                          updateFireSparks({
+                            speed: Number(e.target.value),
+                            intensity: "custom",
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label style={{ fontSize: "11px", marginTop: "8px" }}>
+                      Tamanho das Faíscas: <strong>{Math.round(((config.fx?.fireSparks?.size ?? config.fireSparks?.size ?? 1)) * 100)}%</strong>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="2.0"
+                        step="0.05"
+                        value={config.fx?.fireSparks?.size ?? config.fireSparks?.size ?? 1}
+                        onChange={(e) =>
+                          updateFireSparks({
+                            size: Number(e.target.value),
+                            intensity: "custom",
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label style={{ fontSize: "11px", marginTop: "8px" }}>
+                      Altura Máxima de Subida: <strong>{config.fx?.fireSparks?.maxHeight ?? config.fireSparks?.maxHeight ?? 105}%</strong>
+                      <input
+                        type="range"
+                        min="40"
+                        max="120"
+                        step="5"
+                        value={config.fx?.fireSparks?.maxHeight ?? config.fireSparks?.maxHeight ?? 105}
+                        onChange={(e) =>
+                          updateFireSparks({
+                            maxHeight: Number(e.target.value),
+                            intensity: "custom",
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  {/* 4. Brilho Inferior (Calor da Base) */}
+                  <div style={{ background: "rgba(255,255,255,0.03)", padding: "10px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <label className="toggle-field" style={{ margin: 0 }}>
+                      <span>Brilho de Calor na Base da TV</span>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(config.fx?.fireSparks?.bottomGlow ?? config.fireSparks?.bottomGlow ?? true)}
+                        onChange={(e) =>
+                          updateFireSparks({
+                            bottomGlow: e.target.checked,
+                          })
+                        }
+                      />
+                    </label>
+
+                    {(config.fx?.fireSparks?.bottomGlow ?? config.fireSparks?.bottomGlow ?? true) && (
+                      <label style={{ fontSize: "11px", marginTop: "8px" }}>
+                        Intensidade do Brilho Inferior: <strong>{config.fx?.fireSparks?.bottomGlowOpacity ?? config.fireSparks?.bottomGlowOpacity ?? 25}%</strong>
+                        <input
+                          type="range"
+                          min="5"
+                          max="100"
+                          step="5"
+                          value={config.fx?.fireSparks?.bottomGlowOpacity ?? config.fireSparks?.bottomGlowOpacity ?? 25}
+                          onChange={(e) =>
+                            updateFireSparks({
+                              bottomGlowOpacity: Number(e.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  {/* 5. Modo de Desempenho */}
+                  <div className="control-field">
+                    <span className="control-label-mini">Modo de Desempenho do Dispositivo:</span>
+                    <div className="segmented-group">
+                      <button
+                        type="button"
+                        className={
+                          (config.fx?.fireSparks?.performance || config.fireSparks?.performance || "normal") === "normal"
+                            ? "active"
+                            : ""
+                        }
+                        onClick={() => updateFireSparks({ performance: "normal" })}
+                      >
+                        ⚡ Normal (GPU Completa)
+                      </button>
+                      <button
+                        type="button"
+                        className={
+                          (config.fx?.fireSparks?.performance || config.fireSparks?.performance) === "low"
+                            ? "active"
+                            : ""
+                        }
+                        onClick={() => updateFireSparks({ performance: "low" })}
+                        title="Reduz partículas e sombras para TVs mais antigas ou TV Box"
+                      >
+                        🍃 Econômico (TV Box / Antiga)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* B. SEÇÃO: BLACK FRIDAY FX (DECORAÇÕES OPCIONAIS) */}
         <div className={`accordion-item ${openSections.blackFridayFx ? "open" : ""}`}>
           <button
@@ -508,8 +1880,77 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
 
           {openSections.blackFridayFx && (
             <div className="accordion-body">
-              {/* 1. Balões Flutuantes Pretos */}
+              {/* 0. Molduras de Pinceladas Pretas nos Cantos */}
               <label className="toggle-field">
+                <span>🖌️ Molduras Pretas nos 4 Cantos da TV</span>
+                <input
+                  type="checkbox"
+                  checked={config.fx?.brushCorners?.enabled !== false && config.visibility?.brushCorners !== false}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    onChange((prev) => ({
+                      ...prev,
+                      visibility: {
+                        ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                        brushCorners: checked,
+                      },
+                      fx: {
+                        ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
+                        brushCorners: {
+                          ...(prev.fx?.brushCorners || { opacity: 100, scale: 1 }),
+                          enabled: checked,
+                        },
+                      },
+                    }));
+                    onReplay();
+                  }}
+                />
+              </label>
+
+              {config.fx?.brushCorners?.enabled !== false && config.visibility?.brushCorners !== false && (
+                <div className="control-field" style={{ padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: "6px" }}>
+                  <label>
+                    Tamanho / Escala das Molduras: <strong>{Math.round((config.fx?.brushCorners?.scale ?? 1) * 100)}%</strong>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="3.5"
+                      step="0.05"
+                      value={config.fx?.brushCorners?.scale ?? 1}
+                      onChange={(e) =>
+                        updateFx({
+                          brushCorners: {
+                            ...(config.fx?.brushCorners || { enabled: true, opacity: 100 }),
+                            scale: Number(e.target.value),
+                          },
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label style={{ marginTop: "8px" }}>
+                    Opacidade: <strong>{config.fx?.brushCorners?.opacity ?? 100}%</strong>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="5"
+                      value={config.fx?.brushCorners?.opacity ?? 100}
+                      onChange={(e) =>
+                        updateFx({
+                          brushCorners: {
+                            ...(config.fx?.brushCorners || { enabled: true, scale: 1 }),
+                            opacity: Number(e.target.value),
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+
+              {/* 1. Balões Flutuantes Pretos */}
+              <label className="toggle-field" style={{ marginTop: "12px" }}>
                 <span>🎈 Balões Flutuantes Pretos (Sway Lateral)</span>
                 <input
                   type="checkbox"
@@ -756,6 +2197,978 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                   }
                 />
               </label>
+            </div>
+          )}
+        </div>
+
+        {/* SEÇÃO: IMAGEM / LOGO BLACK FRIDAY (CAMADA EDITÁVEL) */}
+        <div className={`accordion-item ${openSections.blackFridayImage ? "open" : ""}`}>
+          <button
+            type="button"
+            className="accordion-header"
+            onClick={() => toggleSection("blackFridayImage")}
+            style={{ borderLeft: "3px solid #ff3366" }}
+          >
+            <div className="accordion-header-title">
+              <Sparkles size={15} className="accordion-icon" style={{ color: "#ff3366" }} />
+              <span style={{ color: "#ff3366", fontWeight: 800 }}>
+                🔥 Imagem Black Friday
+              </span>
+            </div>
+            {openSections.blackFridayImage ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+
+          {openSections.blackFridayImage && (
+            <div className="accordion-body">
+              {/* Abas: Conteúdo, Estilo, Animação */}
+              <div
+                className="segmented-group"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: "4px",
+                  marginBottom: "14px",
+                }}
+              >
+                <button
+                  type="button"
+                  className={activeBfImageTab === "content" ? "active" : ""}
+                  onClick={() => setActiveBfImageTab("content")}
+                >
+                  <ImageIcon size={12} /> Conteúdo
+                </button>
+                <button
+                  type="button"
+                  className={activeBfImageTab === "style" ? "active" : ""}
+                  onClick={() => setActiveBfImageTab("style")}
+                >
+                  <Sliders size={12} /> Estilo
+                </button>
+                <button
+                  type="button"
+                  className={activeBfImageTab === "animation" ? "active" : ""}
+                  onClick={() => setActiveBfImageTab("animation")}
+                >
+                  <Play size={12} /> Animação
+                </button>
+              </div>
+
+              {/* ABA 1: CONTEÚDO */}
+              {activeBfImageTab === "content" && (
+                <div>
+                  <label className="toggle-field" style={{ marginBottom: "12px" }}>
+                    <span>👁️ Exibir Imagem / Selo Black Friday</span>
+                    <input
+                      type="checkbox"
+                      checked={config.blackFridayImage?.visible !== false}
+                      onChange={(e) => updateBlackFridayImage({ visible: e.target.checked })}
+                    />
+                  </label>
+
+                  {/* Preview da Imagem Atual */}
+                  <div
+                    style={{
+                      background: "rgba(0,0,0,0.4)",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      borderRadius: "8px",
+                      padding: "12px",
+                      textAlign: "center",
+                      marginBottom: "12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minHeight: "100px",
+                    }}
+                  >
+                    {config.blackFridayImage?.src ? (
+                      <img
+                        src={config.blackFridayImage.src}
+                        alt="Imagem Black Friday Customizada"
+                        style={{
+                          maxHeight: "80px",
+                          maxWidth: "100%",
+                          objectFit: "contain",
+                        }}
+                      />
+                    ) : (
+                      <div className="bf-stamp-cartaz-badge" style={{ transform: "scale(0.85)" }}>
+                        <span className="bf-badge-word-black">BLACK</span>
+                        <span className="bf-badge-word-friday">FRIDAY</span>
+                      </div>
+                    )}
+                    <small style={{ marginTop: "6px", color: "var(--muted)", fontSize: "11px" }}>
+                      {config.blackFridayImage?.src
+                        ? "Imagem personalizada ativa"
+                        : "Selo tipográfico padrão ativo"}
+                    </small>
+                  </div>
+
+                  {/* Upload de Nova Imagem */}
+                  <input
+                    type="file"
+                    ref={bfImageFileInputRef}
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    style={{ display: "none" }}
+                    onChange={handleBfImageUpload}
+                  />
+
+                  <div style={{ display: "grid", gap: "8px" }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={isUploadingBfImage}
+                      onClick={() => bfImageFileInputRef.current?.click()}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <Upload size={14} />
+                      <span>
+                        {isUploadingBfImage
+                          ? "Enviando para o Supabase..."
+                          : config.blackFridayImage?.src
+                            ? "Substituir Imagem / Logo"
+                            : "Escolher Imagem / Logo"}
+                      </span>
+                    </button>
+
+                    {/* Status de Upload / Erro */}
+                    {isUploadingBfImage && (
+                      <div style={{ fontSize: "11px", color: "var(--accent, #f2c94c)", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span>⏳ Enviando imagem para o Supabase Storage...</span>
+                      </div>
+                    )}
+
+                    {bfUploadSuccess && (
+                      <div style={{ fontSize: "11px", color: "#4ade80", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span>✓ {bfUploadSuccess}</span>
+                      </div>
+                    )}
+
+                    {bfUploadError && (
+                      <div style={{ fontSize: "11px", color: "#f87171", background: "rgba(239,68,68,0.1)", padding: "6px 8px", borderRadius: "6px", border: "1px solid rgba(239,68,68,0.2)" }}>
+                        ⚠️ {bfUploadError}
+                      </div>
+                    )}
+
+                    {/* Input manual de URL da Imagem */}
+                    <div className="control-field" style={{ marginTop: "4px" }}>
+                      <label style={{ fontSize: "11px" }}>
+                        Ou URL pública da Imagem (HTTPS):
+                        <input
+                          type="text"
+                          placeholder="https://.../sua-imagem.png"
+                          value={config.blackFridayImage?.src || ""}
+                          onChange={(e) =>
+                            updateBlackFridayImage({
+                              src: e.target.value,
+                              originalSrc: e.target.value,
+                              visible: true,
+                            })
+                          }
+                          style={{
+                            width: "100%",
+                            padding: "6px 8px",
+                            fontSize: "11px",
+                            borderRadius: "4px",
+                            background: "rgba(0,0,0,0.3)",
+                            border: "1px solid rgba(255,255,255,0.15)",
+                            color: "#ffffff",
+                            marginTop: "4px",
+                          }}
+                        />
+                      </label>
+                    </div>
+
+                    {/* Ferramenta de Remoção de Fundo */}
+                    {config.blackFridayImage?.src && (
+                      <div
+                        style={{
+                          background: "rgba(255,255,255,0.03)",
+                          border: "1px dashed rgba(255,255,255,0.15)",
+                          borderRadius: "8px",
+                          padding: "10px",
+                          marginTop: "6px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+                          <Wand2 size={14} style={{ color: "#ff3366" }} />
+                          <strong style={{ fontSize: "12px", color: "#ffffff" }}>
+                            Removedor de Fundo Branco
+                          </strong>
+                        </div>
+                        <p style={{ margin: "0 0 8px", fontSize: "11px", color: "var(--muted)" }}>
+                          Remove automaticamente o fundo branco ou claro da imagem enviada diretamente no navegador.
+                        </p>
+
+                        <div className="control-field">
+                          <label style={{ fontSize: "11px" }}>
+                            Tolerância do Branco: <strong>{bgRemovalTolerance}</strong>
+                            <input
+                              type="range"
+                              min="5"
+                              max="100"
+                              step="1"
+                              value={bgRemovalTolerance}
+                              onChange={(e) => setBgRemovalTolerance(Number(e.target.value))}
+                            />
+                          </label>
+                        </div>
+
+                        {bgRemovalError && (
+                          <div style={{ color: "#ff5c5c", fontSize: "11px", marginBottom: "8px" }}>
+                            ⚠️ {bgRemovalError}
+                          </div>
+                        )}
+
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ flex: 1, fontSize: "12px", padding: "6px 8px" }}
+                            disabled={isRemovingBg}
+                            onClick={handleRemoveBg}
+                          >
+                            <Wand2 size={12} />
+                            <span>{isRemovingBg ? "Processando..." : "Remover Fundo"}</span>
+                          </button>
+
+                          {config.blackFridayImage?.originalSrc && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ fontSize: "12px", padding: "6px 8px" }}
+                              onClick={handleRestoreOriginal}
+                              title="Restaurar a foto original antes do recorte"
+                            >
+                              <RotateCcw size={12} />
+                              <span>Original</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {config.blackFridayImage?.src && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={handleResetToDefaultBadge}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px",
+                          marginTop: "4px",
+                        }}
+                      >
+                        <RotateCcw size={12} />
+                        <span>Reverter para Selo Padrão Black Friday</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ABA 2: ESTILO & POSICIONAMENTO */}
+              {activeBfImageTab === "style" && (
+                <div>
+                  {/* Presets de Posição 3x3 */}
+                  <div className="control-field">
+                    <span className="control-label-mini">Presets de Posição Rápida (Grade Rápida):</span>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 1fr)",
+                        gap: "4px",
+                        marginBottom: "12px",
+                      }}
+                    >
+                      {[
+                        { label: "↖ Topo Esq", x: 4, y: 4 },
+                        { label: "↑ Topo Centro", x: 41, y: 4 },
+                        { label: "↗ Topo Dir", x: 82, y: 6 },
+                        { label: "↗ Topo Fora (Y: -15%)", x: 82, y: -15 },
+                        { label: "↑ Topo Fora (Y: -15%)", x: 41, y: -15 },
+                        { label: "• Centro", x: 41, y: 45 },
+                        { label: "← Centro Esq", x: 4, y: 45 },
+                        { label: "→ Centro Dir", x: 82, y: 45 },
+                        { label: "↙ Base Esq", x: 4, y: 82 },
+                        { label: "↓ Base Centro", x: 41, y: 82 },
+                        { label: "↘ Base Dir", x: 82, y: 82 },
+                      ].map((pos) => {
+                        const isCur =
+                          Math.round(config.blackFridayImage?.x ?? 82) === pos.x &&
+                          Math.round(config.blackFridayImage?.y ?? 6) === pos.y;
+                        return (
+                          <button
+                            key={pos.label}
+                            type="button"
+                            className={`layout-pill-btn ${isCur ? "active" : ""}`}
+                            style={{ padding: "6px 2px", fontSize: "11px", textAlign: "center" }}
+                            onClick={() => updateBlackFridayImage({ x: pos.x, y: pos.y })}
+                          >
+                            {pos.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Coordenadas X e Y Normalizadas (Permite Valores Negativos como -15%) */}
+                  <div className="control-field">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <label style={{ fontSize: "11px", margin: 0 }}>Posição X (Horizontal %):</label>
+                      <input
+                        type="number"
+                        min="-100"
+                        max="200"
+                        step="1"
+                        value={Math.round(config.blackFridayImage?.x ?? 82)}
+                        onChange={(e) => updateBlackFridayImage({ x: Number(e.target.value) })}
+                        style={{
+                          width: "56px",
+                          padding: "2px 4px",
+                          fontSize: "11px",
+                          borderRadius: "4px",
+                          background: "rgba(0,0,0,0.4)",
+                          border: "1px solid rgba(255,255,255,0.2)",
+                          color: "#ffffff",
+                          textAlign: "right",
+                        }}
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min="-50"
+                      max="150"
+                      step="1"
+                      value={config.blackFridayImage?.x ?? 82}
+                      onChange={(e) => updateBlackFridayImage({ x: Number(e.target.value) })}
+                    />
+                  </div>
+
+                  <div className="control-field">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <label style={{ fontSize: "11px", margin: 0 }}>Posição Y (Vertical %):</label>
+                      <input
+                        type="number"
+                        min="-100"
+                        max="200"
+                        step="1"
+                        value={Math.round(config.blackFridayImage?.y ?? 6)}
+                        onChange={(e) => updateBlackFridayImage({ y: Number(e.target.value) })}
+                        style={{
+                          width: "56px",
+                          padding: "2px 4px",
+                          fontSize: "11px",
+                          borderRadius: "4px",
+                          background: "rgba(0,0,0,0.4)",
+                          border: "1px solid rgba(255,255,255,0.2)",
+                          color: "#ffffff",
+                          textAlign: "right",
+                        }}
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min="-50"
+                      max="150"
+                      step="1"
+                      value={config.blackFridayImage?.y ?? 6}
+                      onChange={(e) => updateBlackFridayImage({ y: Number(e.target.value) })}
+                    />
+                  </div>
+
+                  {/* Largura (%) e Escala */}
+                  <div className="control-field">
+                    <label style={{ fontSize: "11px" }}>
+                      Largura da Imagem na Tela: <strong>{config.blackFridayImage?.width ?? 18}%</strong>
+                      <input
+                        type="range"
+                        min="5"
+                        max="80"
+                        step="1"
+                        value={config.blackFridayImage?.width ?? 18}
+                        onChange={(e) => updateBlackFridayImage({ width: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="control-field">
+                    <label style={{ fontSize: "11px" }}>
+                      Escala / Zoom: <strong>{Math.round((config.blackFridayImage?.scale ?? 1) * 100)}% ({config.blackFridayImage?.scale ?? 1}x)</strong>
+                      <input
+                        type="range"
+                        min="0.2"
+                        max="3.0"
+                        step="0.05"
+                        value={config.blackFridayImage?.scale ?? 1}
+                        onChange={(e) => updateBlackFridayImage({ scale: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+
+                  {/* Rotação e Opacidade */}
+                  <div className="control-field">
+                    <label style={{ fontSize: "11px" }}>
+                      Rotação: <strong>{config.blackFridayImage?.rotation ?? 0}°</strong>
+                      <input
+                        type="range"
+                        min="-180"
+                        max="180"
+                        step="5"
+                        value={config.blackFridayImage?.rotation ?? 0}
+                        onChange={(e) => updateBlackFridayImage({ rotation: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="control-field">
+                    <label style={{ fontSize: "11px" }}>
+                      Opacidade: <strong>{config.blackFridayImage?.opacity ?? 100}%</strong>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="5"
+                        value={config.blackFridayImage?.opacity ?? 100}
+                        onChange={(e) => updateBlackFridayImage({ opacity: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="control-field">
+                    <label style={{ fontSize: "11px" }}>
+                      Camada / Z-Index: <strong>{config.blackFridayImage?.zIndex ?? 25}</strong>
+                      <input
+                        type="range"
+                        min="1"
+                        max="60"
+                        step="1"
+                        value={config.blackFridayImage?.zIndex ?? 25}
+                        onChange={(e) => updateBlackFridayImage({ zIndex: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* ABA 3: ANIMAÇÃO */}
+              {activeBfImageTab === "animation" && (
+                <div>
+                  <div className="control-field">
+                    <span className="control-label-mini">Animação de Entrada (Ao Trocar de Oferta):</span>
+                    <select
+                      className="control-select"
+                      value={config.blackFridayImage?.animation?.entryPreset || config.blackFridayImage?.animation?.preset || "zoom-in"}
+                      onChange={(e) =>
+                        updateBlackFridayImage((prev) => ({
+                          ...prev,
+                          animation: {
+                            ...(prev.animation || DEFAULT_BLACK_FRIDAY_IMAGE.animation),
+                            entryPreset: e.target.value as BlackFridayEntryAnimationPreset,
+                            preset: e.target.value as BlackFridayAnimationPreset,
+                          },
+                        }))
+                      }
+                    >
+                      <option value="none">Nenhuma (Estática)</option>
+                      <option value="zoom-in">Zoom-in / Impacto (Padrão)</option>
+                      <option value="fade-in">Fade Suave</option>
+                      <option value="slide-in">Slide da Direita</option>
+                      <option value="bounce">Bounce Elástico</option>
+                    </select>
+                  </div>
+
+                  <div className="control-field">
+                    <span className="control-label-mini">Animação Contínua (Idle / Loop):</span>
+                    <select
+                      className="control-select"
+                      value={config.blackFridayImage?.animation?.idlePreset || "float"}
+                      onChange={(e) =>
+                        updateBlackFridayImage((prev) => ({
+                          ...prev,
+                          animation: {
+                            ...(prev.animation || DEFAULT_BLACK_FRIDAY_IMAGE.animation),
+                            idlePreset: e.target.value as BlackFridayIdleAnimationPreset,
+                          },
+                        }))
+                      }
+                    >
+                      <option value="none">Nenhuma (Parada)</option>
+                      <option value="float">Flutuação Suave (Padrão)</option>
+                      <option value="pulse">Pulsação / Batimento</option>
+                      <option value="rotate-smooth">Giro Lento Contínuo</option>
+                      <option value="shake">Tremor de Destaque (Shake)</option>
+                      <option value="flip">Giro 3D (Flip)</option>
+                      <option value="neon">Brilho Neon Oscilante</option>
+                    </select>
+                  </div>
+
+                  <div className="control-field">
+                    <label style={{ fontSize: "11px" }}>
+                      Duração da Animação: <strong>{config.blackFridayImage?.animation?.duration ?? 0.8}s</strong>
+                      <input
+                        type="range"
+                        min="0.2"
+                        max="4.0"
+                        step="0.1"
+                        value={config.blackFridayImage?.animation?.duration ?? 0.8}
+                        onChange={(e) =>
+                          updateBlackFridayImage((prev) => ({
+                            ...prev,
+                            animation: {
+                              ...(prev.animation || DEFAULT_BLACK_FRIDAY_IMAGE.animation),
+                              duration: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <div className="control-field">
+                    <label style={{ fontSize: "11px" }}>
+                      Atraso de Início (Delay): <strong>{config.blackFridayImage?.animation?.delay ?? 0.1}s</strong>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2.0"
+                        step="0.05"
+                        value={config.blackFridayImage?.animation?.delay ?? 0.1}
+                        onChange={(e) =>
+                          updateBlackFridayImage((prev) => ({
+                            ...prev,
+                            animation: {
+                              ...(prev.animation || DEFAULT_BLACK_FRIDAY_IMAGE.animation),
+                              delay: Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <div className="control-field">
+                    <span className="control-label-mini">Velocidade da Animação:</span>
+                    <div className="segmented-group">
+                      {(["slow", "normal", "fast"] as const).map((spd) => (
+                        <button
+                          key={spd}
+                          type="button"
+                          className={
+                            (config.blackFridayImage?.animation?.speed || "normal") === spd
+                              ? "active"
+                              : ""
+                          }
+                          onClick={() =>
+                            updateBlackFridayImage((prev) => ({
+                              ...prev,
+                              animation: {
+                                ...(prev.animation || DEFAULT_BLACK_FRIDAY_IMAGE.animation),
+                                speed: spd,
+                              },
+                            }))
+                          }
+                        >
+                          {spd === "slow" ? "Suave" : spd === "normal" ? "Normal" : "Rápido"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="control-field">
+                    <span className="control-label-mini">Intensidade do Movimento:</span>
+                    <div className="segmented-group">
+                      {(["subtle", "normal", "strong"] as const).map((int) => (
+                        <button
+                          key={int}
+                          type="button"
+                          className={
+                            (config.blackFridayImage?.animation?.intensity || "normal") === int
+                              ? "active"
+                              : ""
+                          }
+                          onClick={() =>
+                            updateBlackFridayImage((prev) => ({
+                              ...prev,
+                              animation: {
+                                ...(prev.animation || DEFAULT_BLACK_FRIDAY_IMAGE.animation),
+                                intensity: int,
+                              },
+                            }))
+                          }
+                        >
+                          {int === "subtle" ? "Sutil" : int === "normal" ? "Normal" : "Forte"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: "14px" }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={onReplay}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "8px",
+                        padding: "10px",
+                      }}
+                    >
+                      <Play size={14} />
+                      <span>▶ Testar / Pré-visualizar Animação</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 2.5 SEÇÃO: SOBREPOSIÇÃO EM VÍDEOS (LOGO & BLACK FRIDAY) */}
+        <div className={`accordion-item ${openSections.videoOverlay ? "open" : ""}`}>
+          <button
+            type="button"
+            className="accordion-header"
+            onClick={() => toggleSection("videoOverlay")}
+          >
+            <div className="accordion-header-title">
+              <Play size={15} className="accordion-icon" style={{ color: "#a78bfa" }} />
+              <span>🎬 Sobreposição em Vídeos (Logo & Black Friday)</span>
+            </div>
+            {openSections.videoOverlay ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+
+          {openSections.videoOverlay && (
+            <div className="accordion-body">
+              <div className="info-tip-box" style={{ marginBottom: "12px", background: "rgba(167, 139, 250, 0.1)", borderColor: "rgba(167, 139, 250, 0.25)" }}>
+                <span>🎬</span>
+                <small style={{ color: "#d8b4fe" }}>
+                  <strong>Ajuste Exclusivo para Vídeos:</strong> Posicione a Logo e a Imagem Black Friday de forma independente quando um vídeo estiver passando na TV, sem afetar o layout dos produtos!
+                </small>
+              </div>
+
+              {/* Botão de Trocar Pré-visualização para Modo Vídeo */}
+              <div style={{ marginBottom: "14px" }}>
+                <button
+                  type="button"
+                  className={`btn ${(config.layout as string) === "video" ? "btn-success" : "btn-secondary"}`}
+                  onClick={() => onChange((prev) => ({ ...prev, layout: "video" as OfferLayout }))}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    padding: "8px 12px",
+                    fontSize: "12px",
+                  }}
+                >
+                  <Play size={14} />
+                  <span>{(config.layout as string) === "video" ? "✓ Visualizando no Vídeo Pausado" : "🎬 Abrir Pré-visualização no Vídeo Pausado"}</span>
+                </button>
+              </div>
+
+              {/* Toggle Habilitar Sobreposição de Vídeo */}
+              <label className="toggle-field" style={{ marginBottom: "12px" }}>
+                <span>Ativar Posições Específicas para Vídeos</span>
+                <input
+                  type="checkbox"
+                  checked={config.videoOverlay?.enabled !== false}
+                  onChange={(e) => updateVideoOverlay({ enabled: e.target.checked })}
+                />
+              </label>
+
+              {/* SUBSEÇÃO 1: LOGO NO VÍDEO */}
+              <div style={{ background: "rgba(255,255,255,0.03)", padding: "10px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.08)", marginBottom: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <strong style={{ fontSize: "12px", color: "#f59e0b", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Sun size={13} /> Logo sobre o Vídeo
+                  </strong>
+                  <label style={{ fontSize: "11px", display: "flex", alignItems: "center", gap: "4px", margin: 0, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={config.videoOverlay?.logo?.visible !== false && config.logo.visible !== false}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          logo: { ...(prev.logo || {}), visible: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Exibir</span>
+                  </label>
+                </div>
+
+                <div className="control-field">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                    <label style={{ fontSize: "11px", margin: 0 }}>Posição X (Horizontal %):</label>
+                    <input
+                      type="number"
+                      min="-20"
+                      max="120"
+                      step="1"
+                      value={Math.round(config.videoOverlay?.logo?.x ?? config.logo.x ?? 4)}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          logo: { ...(prev.logo || {}), x: Number(e.target.value), position: "custom" },
+                        }))
+                      }
+                      style={{ width: "50px", padding: "1px 4px", fontSize: "11px", textAlign: "right", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", borderRadius: "4px" }}
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={config.videoOverlay?.logo?.x ?? config.logo.x ?? 4}
+                    onChange={(e) =>
+                      updateVideoOverlay((prev) => ({
+                        ...prev,
+                        logo: { ...(prev.logo || {}), x: Number(e.target.value), position: "custom" },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="control-field">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                    <label style={{ fontSize: "11px", margin: 0 }}>Posição Y (Vertical %):</label>
+                    <input
+                      type="number"
+                      min="-20"
+                      max="120"
+                      step="1"
+                      value={Math.round(config.videoOverlay?.logo?.y ?? config.logo.y ?? 4)}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          logo: { ...(prev.logo || {}), y: Number(e.target.value), position: "custom" },
+                        }))
+                      }
+                      style={{ width: "50px", padding: "1px 4px", fontSize: "11px", textAlign: "right", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", borderRadius: "4px" }}
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={config.videoOverlay?.logo?.y ?? config.logo.y ?? 4}
+                    onChange={(e) =>
+                      updateVideoOverlay((prev) => ({
+                        ...prev,
+                        logo: { ...(prev.logo || {}), y: Number(e.target.value), position: "custom" },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="control-field">
+                  <label style={{ fontSize: "11px" }}>
+                    Tamanho da Logo no Vídeo: <strong>{config.videoOverlay?.logo?.size ?? config.logo.size}px</strong>
+                    <input
+                      type="range"
+                      min="20"
+                      max="400"
+                      step="4"
+                      value={config.videoOverlay?.logo?.size ?? config.logo.size}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          logo: { ...(prev.logo || {}), size: Number(e.target.value) },
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* SUBSEÇÃO 2: BLACK FRIDAY NO VÍDEO */}
+              <div style={{ background: "rgba(255,255,255,0.03)", padding: "10px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <strong style={{ fontSize: "12px", color: "#ff3366", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Sparkles size={13} /> Imagem Black Friday sobre o Vídeo
+                  </strong>
+                  <label style={{ fontSize: "11px", display: "flex", alignItems: "center", gap: "4px", margin: 0, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={config.videoOverlay?.blackFridayImage?.visible !== false && config.blackFridayImage?.visible !== false}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          blackFridayImage: { ...(prev.blackFridayImage || {}), visible: e.target.checked },
+                        }))
+                      }
+                    />
+                    <span>Exibir</span>
+                  </label>
+                </div>
+
+                {/* Presets de Posição no Vídeo */}
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.5)", display: "block", marginBottom: "3px" }}>
+                    Posições Rápidas no Vídeo:
+                  </span>
+                  <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                    {[
+                      { label: "↗ Topo Fora (Y: -15%)", x: 82, y: -15 },
+                      { label: "↗ Topo Dir (Y: 6%)", x: 82, y: 6 },
+                      { label: "↑ Topo Centro", x: 41, y: 4 },
+                      { label: "↖ Topo Esq", x: 4, y: 4 },
+                      { label: "• Centro", x: 41, y: 45 },
+                      { label: "↘ Base Dir", x: 82, y: 82 },
+                    ].map((pos) => {
+                      const isCurrent =
+                        Math.round(config.videoOverlay?.blackFridayImage?.x ?? config.blackFridayImage?.x ?? 82) === pos.x &&
+                        Math.round(config.videoOverlay?.blackFridayImage?.y ?? config.blackFridayImage?.y ?? 6) === pos.y;
+                      return (
+                        <button
+                          key={pos.label}
+                          type="button"
+                          className={`btn-mini-preset ${isCurrent ? "active" : ""}`}
+                          onClick={() =>
+                            updateVideoOverlay((prev) => ({
+                              ...prev,
+                              blackFridayImage: {
+                                ...(prev.blackFridayImage || {}),
+                                x: pos.x,
+                                y: pos.y,
+                              },
+                            }))
+                          }
+                          style={{
+                            padding: "2px 6px",
+                            fontSize: "10px",
+                            borderRadius: "4px",
+                            background: isCurrent ? "#ff3366" : "rgba(255,255,255,0.08)",
+                            border: isCurrent ? "1px solid #ff3366" : "1px solid rgba(255,255,255,0.15)",
+                            color: "#ffffff",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {pos.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="control-field">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                    <label style={{ fontSize: "11px", margin: 0 }}>Posição X (Horizontal %):</label>
+                    <input
+                      type="number"
+                      min="-100"
+                      max="200"
+                      step="1"
+                      value={Math.round(config.videoOverlay?.blackFridayImage?.x ?? config.blackFridayImage?.x ?? 82)}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          blackFridayImage: { ...(prev.blackFridayImage || {}), x: Number(e.target.value) },
+                        }))
+                      }
+                      style={{ width: "50px", padding: "1px 4px", fontSize: "11px", textAlign: "right", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", borderRadius: "4px" }}
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min="-50"
+                    max="150"
+                    step="1"
+                    value={config.videoOverlay?.blackFridayImage?.x ?? config.blackFridayImage?.x ?? 82}
+                    onChange={(e) =>
+                      updateVideoOverlay((prev) => ({
+                        ...prev,
+                        blackFridayImage: { ...(prev.blackFridayImage || {}), x: Number(e.target.value) },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="control-field">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                    <label style={{ fontSize: "11px", margin: 0 }}>Posição Y (Vertical %):</label>
+                    <input
+                      type="number"
+                      min="-100"
+                      max="200"
+                      step="1"
+                      value={Math.round(config.videoOverlay?.blackFridayImage?.y ?? config.blackFridayImage?.y ?? 6)}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          blackFridayImage: { ...(prev.blackFridayImage || {}), y: Number(e.target.value) },
+                        }))
+                      }
+                      style={{ width: "50px", padding: "1px 4px", fontSize: "11px", textAlign: "right", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", borderRadius: "4px" }}
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min="-50"
+                    max="150"
+                    step="1"
+                    value={config.videoOverlay?.blackFridayImage?.y ?? config.blackFridayImage?.y ?? 6}
+                    onChange={(e) =>
+                      updateVideoOverlay((prev) => ({
+                        ...prev,
+                        blackFridayImage: { ...(prev.blackFridayImage || {}), y: Number(e.target.value) },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="control-field">
+                  <label style={{ fontSize: "11px" }}>
+                    Largura da Imagem no Vídeo: <strong>{config.videoOverlay?.blackFridayImage?.width ?? config.blackFridayImage?.width ?? 18}%</strong>
+                    <input
+                      type="range"
+                      min="5"
+                      max="80"
+                      step="1"
+                      value={config.videoOverlay?.blackFridayImage?.width ?? config.blackFridayImage?.width ?? 18}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          blackFridayImage: { ...(prev.blackFridayImage || {}), width: Number(e.target.value) },
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="control-field">
+                  <label style={{ fontSize: "11px" }}>
+                    Escala / Zoom no Vídeo: <strong>{Math.round((config.videoOverlay?.blackFridayImage?.scale ?? config.blackFridayImage?.scale ?? 1) * 100)}%</strong>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="3.0"
+                      step="0.05"
+                      value={config.videoOverlay?.blackFridayImage?.scale ?? config.blackFridayImage?.scale ?? 1}
+                      onChange={(e) =>
+                        updateVideoOverlay((prev) => ({
+                          ...prev,
+                          blackFridayImage: { ...(prev.blackFridayImage || {}), scale: Number(e.target.value) },
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1143,7 +3556,7 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
           )}
         </div>
 
-        {/* 3. SEÇÃO: SELO / BADGE / TAG PROMOCIONAL */}
+        {/* 3. SEÇÃO: SELO / BADGE / TAG NOS PRODUTOS */}
         <div className={`accordion-item ${openSections.badge ? "open" : ""}`}>
           <button
             type="button"
@@ -1152,13 +3565,32 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
           >
             <div className="accordion-header-title">
               <Tag size={15} className="accordion-icon" />
-              <span>Selo / Tag Promocional</span>
+              <span>🏷️ Selo nos Produtos / Tag (Cards)</span>
             </div>
             {openSections.badge ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
 
           {openSections.badge && (
             <div className="accordion-body">
+              {/* Toggle Principal de Visibilidade do Selo */}
+              <label className="toggle-field" style={{ marginBottom: "12px" }}>
+                <span>🏷️ Exibir Selo / Tag sobre a foto dos Produtos</span>
+                <input
+                  type="checkbox"
+                  checked={config.badge.visible !== false}
+                  onChange={(e) => updateBadge({ visible: e.target.checked })}
+                />
+              </label>
+
+              {config.badge.visible === false && (
+                <div className="info-tip-box" style={{ marginBottom: "12px", background: "rgba(255, 92, 92, 0.1)", borderColor: "rgba(255, 92, 92, 0.3)" }}>
+                  <span>👁️‍🗨️</span>
+                  <small style={{ color: "#ff9999" }}>
+                    <strong>Selo Promocional Oculto:</strong> O selo/tag não está sendo exibido na TV. Marque a caixa acima para reativar a qualquer momento.
+                  </small>
+                </div>
+              )}
+
               <label>
                 Tipo do Selo
                 <div className="segmented-group">
@@ -1234,8 +3666,8 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                     Tamanho da Tag PNG: <strong>{config.badge.size || 70}px</strong>
                     <input
                       type="range"
-                      min="35"
-                      max="140"
+                      min="20"
+                      max="400"
                       step="2"
                       value={config.badge.size || 70}
                       onChange={(e) => updateBadge({ size: Number(e.target.value) })}
@@ -1246,9 +3678,9 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                     Inclinação / Rotação: <strong>{config.badge.rotation}°</strong>
                     <input
                       type="range"
-                      min="-25"
-                      max="25"
-                      step="0.5"
+                      min="-180"
+                      max="180"
+                      step="1"
                       value={config.badge.rotation}
                       onChange={(e) => updateBadge({ rotation: Number(e.target.value) })}
                     />
@@ -1330,9 +3762,9 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                     Inclinação / Rotação: <strong>{config.badge.rotation}°</strong>
                     <input
                       type="range"
-                      min="-15"
-                      max="15"
-                      step="0.5"
+                      min="-180"
+                      max="180"
+                      step="1"
                       value={config.badge.rotation}
                       onChange={(e) => updateBadge({ rotation: Number(e.target.value) })}
                     />
@@ -1369,8 +3801,8 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                 Ajuste Fino Horizontal (Offset X): <strong>{config.badge.offsetX || 0}px</strong>
                 <input
                   type="range"
-                  min="-60"
-                  max="60"
+                  min="-500"
+                  max="500"
                   step="1"
                   value={config.badge.offsetX || 0}
                   onChange={(e) => updateBadge({ offsetX: Number(e.target.value) })}
@@ -1381,8 +3813,8 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                 Ajuste Fino Vertical (Offset Y): <strong>{config.badge.offsetY || 0}px</strong>
                 <input
                   type="range"
-                  min="-60"
-                  max="60"
+                  min="-500"
+                  max="500"
                   step="1"
                   value={config.badge.offsetY || 0}
                   onChange={(e) => updateBadge({ offsetY: Number(e.target.value) })}
@@ -1416,55 +3848,290 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
           {openSections.identity && (
             <div className="accordion-body">
               <label>
-                Posição da Logo
+                Posição da Logo (Presets)
                 <select
                   value={config.logo.position}
-                  onChange={(e) => updateLogo({ position: e.target.value as LogoPosition })}
+                  onChange={(e) => {
+                    const pos = e.target.value as LogoPosition;
+                    let x = config.logo.x ?? 4;
+                    let y = config.logo.y ?? 4;
+                    if (pos === "top-left") { x = 3.5; y = 3.5; }
+                    else if (pos === "top-center") { x = 50; y = 3.5; }
+                    else if (pos === "top-right") { x = 96.5; y = 3.5; }
+                    else if (pos === "bottom-left") { x = 3.5; y = 92; }
+                    else if (pos === "bottom-center") { x = 50; y = 92; }
+                    else if (pos === "bottom-right") { x = 96.5; y = 92; }
+                    else if (pos === "center") { x = 50; y = 50; }
+                    updateLogo({ position: pos, x, y });
+                  }}
                 >
                   <option value="top-left">Topo Esquerdo (Padrão)</option>
                   <option value="top-center">Topo Centralizado</option>
                   <option value="top-right">Topo Direito</option>
                   <option value="bottom-left">Rodapé Esquerdo</option>
+                  <option value="bottom-center">Rodapé Centralizado</option>
+                  <option value="bottom-right">Rodapé Direito</option>
+                  <option value="center">Centro da Tela</option>
+                  <option value="custom">Personalizado (Livre)</option>
                 </select>
               </label>
 
-              <div className="control-field">
-                <span className="control-label-mini">Logo da TV (PNG sem fundo):</span>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <label>
+                  Posição X: <strong>{(config.logo.x ?? 4).toFixed(1)}%</strong>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={config.logo.x ?? 4}
+                    onChange={(e) => updateLogo({ x: Number(e.target.value), position: "custom" })}
+                  />
+                </label>
+                <label>
+                  Posição Y: <strong>{(config.logo.y ?? 4).toFixed(1)}%</strong>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={config.logo.y ?? 4}
+                    onChange={(e) => updateLogo({ y: Number(e.target.value), position: "custom" })}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <label>
+                  Escala: <strong>{Math.round((config.logo.scale ?? 1) * 100)}%</strong>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="3.0"
+                    step="0.05"
+                    value={config.logo.scale ?? 1}
+                    onChange={(e) => updateLogo({ scale: Number(e.target.value) })}
+                  />
+                </label>
+                <label>
+                  Opacidade: <strong>{config.logo.opacity ?? 100}%</strong>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={config.logo.opacity ?? 100}
+                    onChange={(e) => updateLogo({ opacity: Number(e.target.value) })}
+                  />
+                </label>
+              </div>
+
+              <label>
+                Rotação da Logo: <strong>{config.logo.rotation ?? 0}°</strong>
+                <input
+                  type="range"
+                  min="-180"
+                  max="180"
+                  step="1"
+                  value={config.logo.rotation ?? 0}
+                  onChange={(e) => updateLogo({ rotation: Number(e.target.value) })}
+                />
+              </label>
+
+              {/* UPLOAD DA LOGO E REMOÇÃO DE FUNDO */}
+              <div className="control-field" style={{ background: "rgba(255,255,255,0.03)", padding: "10px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.08)", marginTop: "8px", marginBottom: "12px" }}>
+                <span className="control-label-mini" style={{ color: "#f59e0b", display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+                  <ImageIcon size={13} /> Imagem da Logo da TV:
+                </span>
+
+                {/* Prévia da Logo Atual */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "8px",
+                    background: "rgba(0,0,0,0.4)",
+                    borderRadius: "6px",
+                    border: "1px dashed rgba(255,255,255,0.2)",
+                    marginBottom: "10px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "60px",
+                      height: "60px",
+                      borderRadius: "6px",
+                      background: "repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 12px 12px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      overflow: "hidden",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {config.logo.image ? (
+                      <img
+                        src={config.logo.image}
+                        alt="Logo Preview"
+                        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                      />
+                    ) : (
+                      <div style={{ textAlign: "center", fontSize: "10px", color: "#f2c94c", fontWeight: "bold" }}>
+                        SOL TV
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#ffffff" }}>
+                      {config.logo.image ? "Logo Personalizada" : "Logo Padrão Sol"}
+                    </div>
+                    <div style={{ fontSize: "10px", color: config.logo.removeBackground ? "#4ade80" : "rgba(255,255,255,0.6)", marginTop: "2px" }}>
+                      {config.logo.removeBackground
+                        ? "✓ Fundo transparente aplicado"
+                        : config.logo.image
+                        ? "Imagem carregada"
+                        : "Vetor nativo do tema"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Input de Arquivo */}
                 <input
                   type="file"
                   ref={logoFileInputRef}
-                  accept="image/png,image/webp"
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
                   style={{ display: "none" }}
                   onChange={handleLogoUpload}
                 />
-                <div className="file-upload-actions">
+
+                {/* Botões de Upload e Ações */}
+                <div style={{ display: "grid", gap: "6px" }}>
                   <button
                     type="button"
-                    className="btn btn-secondary btn-upload-pill"
+                    className="btn btn-primary"
+                    disabled={isUploadingLogo}
                     onClick={() => logoFileInputRef.current?.click()}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                    }}
                   >
                     <Upload size={14} />
-                    <span>Upload Logo PNG</span>
+                    <span>
+                      {isUploadingLogo
+                        ? "Enviando para o Supabase..."
+                        : config.logo.image
+                        ? "Substituir Imagem da Logo"
+                        : "Carregar Imagem da Logo"}
+                    </span>
                   </button>
+
+                  {/* Feedback de Upload */}
+                  {logoUploadSuccess && (
+                    <div style={{ fontSize: "11px", color: "#4ade80", display: "flex", alignItems: "center", gap: "4px" }}>
+                      <span>✓ {logoUploadSuccess}</span>
+                    </div>
+                  )}
+
+                  {logoUploadError && (
+                    <div style={{ fontSize: "11px", color: "#f87171", background: "rgba(239,68,68,0.1)", padding: "6px 8px", borderRadius: "6px", border: "1px solid rgba(239,68,68,0.2)" }}>
+                      <span>⚠️ {logoUploadError}</span>
+                    </div>
+                  )}
+
+                  {/* MÓDULO DE REMOÇÃO DE FUNDO */}
                   {config.logo.image && (
-                    <button
-                      type="button"
-                      className="btn-icon-sub delete-btn"
-                      onClick={() => updateLogo({ image: undefined })}
-                      title="Restaurar logo padrão Sol"
+                    <div
+                      style={{
+                        background: "rgba(0,0,0,0.3)",
+                        padding: "10px",
+                        borderRadius: "6px",
+                        border: "1px solid rgba(242, 201, 76, 0.25)",
+                        marginTop: "6px",
+                      }}
                     >
-                      <X size={14} />
-                    </button>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                        <span style={{ fontSize: "11px", fontWeight: 600, color: "#f2c94c", display: "flex", alignItems: "center", gap: "5px" }}>
+                          <Wand2 size={13} /> Remoção de Fundo da Logo:
+                        </span>
+                        <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600 }}>
+                          Tolerância: {logoBgTolerance}%
+                        </span>
+                      </div>
+
+                      <input
+                        type="range"
+                        min="1"
+                        max="100"
+                        value={logoBgTolerance}
+                        onChange={(e) => setLogoBgTolerance(Number(e.target.value))}
+                        style={{ width: "100%", marginBottom: "8px" }}
+                      />
+
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={isRemovingLogoBg}
+                        onClick={handleRemoveLogoBg}
+                        style={{
+                          width: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px",
+                          background: "rgba(242, 201, 76, 0.15)",
+                          borderColor: "rgba(242, 201, 76, 0.4)",
+                          color: "#ffffff",
+                        }}
+                      >
+                        <Wand2 size={14} />
+                        <span>{isRemovingLogoBg ? "Removendo Fundo..." : "🪄 Remover Fundo Branco / Sólido"}</span>
+                      </button>
+
+                      {logoBgRemovalError && (
+                        <div style={{ fontSize: "11px", color: "#f87171", marginTop: "6px" }}>
+                          ⚠️ {logoBgRemovalError}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                        {config.logo.originalImage && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={handleRestoreOriginalLogo}
+                            style={{ flex: 1, fontSize: "11px", padding: "4px 8px" }}
+                            title="Desfazer remoção de fundo e restaurar arquivo original"
+                          >
+                            <RotateCcw size={11} />
+                            <span>Restaurar Original</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={handleResetToDefaultSolLogo}
+                          style={{ flex: 1, fontSize: "11px", padding: "4px 8px", color: "#f87171" }}
+                          title="Remover imagem personalizada e voltar para logo nativa Sol"
+                        >
+                          <X size={11} />
+                          <span>Logo Padrão</span>
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
 
               <label>
-                Tamanho da Logo: <strong>{config.logo.size}px</strong>
+                Tamanho Base: <strong>{config.logo.size}px</strong>
                 <input
                   type="range"
-                  min="36"
-                  max="120"
+                  min="20"
+                  max="450"
                   step="2"
                   value={config.logo.size}
                   onChange={(e) => updateLogo({ size: Number(e.target.value) })}
@@ -1511,8 +4178,8 @@ export function MotionControls({ config, onChange, onReplay }: MotionControlsPro
                 Tamanho do Texto: <strong>{config.logo.sectorTextSize}px</strong>
                 <input
                   type="range"
-                  min="9"
-                  max="24"
+                  min="8"
+                  max="120"
                   step="1"
                   value={config.logo.sectorTextSize}
                   onChange={(e) => updateLogo({ sectorTextSize: Number(e.target.value) })}

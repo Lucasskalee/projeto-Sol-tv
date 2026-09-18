@@ -45,6 +45,7 @@ export type CompositionManagerProps = {
 const LAYOUT_DISPLAY: Record<OfferLayout, { name: string; count: string }> = {
   hero: { name: "DESTAQUE", count: "1 produto" },
   duo: { name: "DUPLA", count: "2 produtos" },
+  trio: { name: "TRIO", count: "3 produtos" },
   grid4: { name: "GRADE 4", count: "4 produtos" },
   grid8: { name: "GRADE 8", count: "8 produtos" },
 };

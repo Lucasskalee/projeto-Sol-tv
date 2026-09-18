@@ -16,12 +16,16 @@ create table if not exists public.sol_tv_offers (
   starts_at timestamptz,
   ends_at timestamptz,
   layout text not null default 'single' check (layout in ('single', 'pair', 'grid')),
+  image_scale numeric(4,2) default 1.0,
   store_id uuid,
   screen_id uuid,
   playlist_id uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Migração segura para bases já existentes:
+alter table public.sol_tv_offers add column if not exists image_scale numeric(4,2) default 1.0;
 
 create index if not exists sol_tv_offers_sector_order_idx
   on public.sol_tv_offers (sector, display_order, created_at);

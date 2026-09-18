@@ -11,14 +11,17 @@ import {
   type ExitPreset,
   type TransitionPreset,
 } from "../transitions";
+import { TvViewport } from "./TvViewport";
 import { ImageSlide } from "./ImageSlide";
 import { OfferSlide, OpeningSlide } from "./OfferSlide";
 import { VideoSlide } from "./VideoSlide";
 import { PaintSwipeOverlay } from "./PaintSwipeOverlay";
 import { BlackFridayDecorations } from "./BlackFridayDecorations";
+import { BlackFridayImageElement } from "./motion/BlackFridayImageElement";
+import { FireSparks } from "./effects/FireSparks";
 import type { ThemeDefinition } from "../themes/types";
 import { toThemeStyle } from "../themes/toThemeStyle";
-import type { OfferLayout } from "../offers/layouts";
+import { normalizeOfferLayout, type OfferLayout } from "../offers/layouts";
 import type { MotionConfig } from "../motion/types";
 import { loadActiveMotionConfig } from "../motion/storage";
 
@@ -32,6 +35,7 @@ export type TvPlayerProps = {
   theme: ThemeDefinition;
   layoutOverride?: OfferLayout;
   motionConfig?: MotionConfig;
+  paused?: boolean;
 };
 
 export function TvPlayer({
@@ -44,10 +48,12 @@ export function TvPlayer({
   theme,
   layoutOverride,
   motionConfig,
+  paused: pausedProp,
 }: TvPlayerProps) {
   const [index, setIndex] = useState(0);
   const [elapsed, setElapsed] = useState(0);
-  const [paused, setPaused] = useState(false);
+  const [internalPaused, setInternalPaused] = useState(false);
+  const paused = pausedProp !== undefined ? pausedProp : internalPaused;
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState("");
   const [isExiting, setIsExiting] = useState(false);
@@ -83,78 +89,6 @@ export function TvPlayer({
       },
     };
   }, [theme, activeMotion]);
-
-  const motionStyleOverrides = useMemo(() => {
-    if (!activeMotion) return {};
-    const styles: Record<string, string> = {
-      "--lab-speed-scale": `${1 / (activeMotion.speed || 1)}`,
-      "--lab-logo-size": `${activeMotion.logo.size}px`,
-      "--lab-sector-text-size": `${activeMotion.logo.sectorTextSize}px`,
-      "--lab-badge-rotation": `${activeMotion.badge.rotation}deg`,
-      "--lab-ambient-speed": `${activeMotion.ambient.speed}s`,
-      "--lab-ambient-opacity": `${activeMotion.ambient.opacity / 100}`,
-      "--lab-shimmer-display": activeMotion.pricePhysics.shimmer ? "block" : "none",
-    };
-
-    if (activeMotion.logo.sectorTextColor) {
-      styles["--lab-sector-text-color"] = activeMotion.logo.sectorTextColor;
-    }
-
-    // Theme slug of current effective theme
-    const isThemeBlackFriday = effectiveTheme.slug === "black-friday";
-
-    // Custom Color Overrides (Only injected if explicitly enabled by user)
-    if (activeMotion.colorOverrides?.enabled) {
-      const co = activeMotion.colorOverrides;
-      if (co.background) {
-        styles["--bf-custom-bg"] = co.background;
-        styles["--lab-custom-bg"] = co.background;
-      }
-      if (co.productName) styles["--bf-custom-name-color"] = co.productName;
-      if (co.price) styles["--bf-custom-price-color"] = co.price;
-      if (co.currency) styles["--bf-custom-currency-color"] = co.currency;
-      if (co.unit) styles["--bf-custom-unit-color"] = co.unit;
-      if (co.oldPrice) styles["--bf-custom-oldprice-color"] = co.oldPrice;
-      if (co.strikeColor) styles["--bf-custom-strike-color"] = co.strikeColor;
-      if (co.capsuleBg) styles["--bf-custom-capsule-bg"] = co.capsuleBg;
-      if (co.capsuleText) styles["--bf-custom-capsule-text"] = co.capsuleText;
-      if (co.sectorText) {
-        styles["--bf-custom-sector-color"] = co.sectorText;
-        styles["--lab-sector-text-color"] = co.sectorText;
-      }
-      if (co.badgeBg) styles["--bf-custom-badge-bg"] = co.badgeBg;
-      if (co.badgeText) styles["--bf-custom-badge-text"] = co.badgeText;
-    } else if (activeMotion.background && !isThemeBlackFriday) {
-      // General background override (only if not Black Friday default or explicitly modified)
-      if (activeMotion.background.type === "image" && activeMotion.background.imageUrl) {
-        styles["--lab-custom-bg-image"] = `url(${activeMotion.background.imageUrl})`;
-      } else if (
-        activeMotion.themeSlug !== "black-friday" &&
-        activeMotion.background.type === "solid" &&
-        activeMotion.background.color
-      ) {
-        styles["--lab-custom-bg"] = activeMotion.background.color;
-      } else if (
-        activeMotion.themeSlug !== "black-friday" &&
-        activeMotion.background.type === "gradient"
-      ) {
-        styles["--lab-custom-bg"] = `linear-gradient(${activeMotion.background.gradientAngle || 135}deg, ${activeMotion.background.gradientStart || "#1a0407"}, ${activeMotion.background.gradientEnd || "#050608"})`;
-      }
-    }
-
-    return styles as React.CSSProperties;
-  }, [activeMotion, effectiveTheme]);
-
-  const motionClassNames = useMemo(() => {
-    if (!activeMotion) return "";
-    const cardStyle = activeMotion.productCard?.style || "transparent";
-    const nameAnim = activeMotion.elementAnimations?.nameAnimation || "slide-up";
-    const priceAnim = activeMotion.elementAnimations?.priceAnimation || "impact";
-    const imgAnim = activeMotion.elementAnimations?.imageAnimation || "float";
-    const choreo = activeMotion.elementAnimations?.choreography || "staggered";
-
-    return `lab-pos-${activeMotion.logo.position} lab-sector-${activeMotion.logo.sectorLayout} lab-impact-${activeMotion.pricePhysics.impact} lab-card-${cardStyle} anim-name-${nameAnim} anim-price-${priceAnim} anim-image-${imgAnim} choreo-${choreo}`;
-  }, [activeMotion]);
 
   const themeStyle = useMemo(() => toThemeStyle(effectiveTheme), [effectiveTheme]);
   const activeTransitionPreset =
@@ -193,8 +127,265 @@ export function TvPlayer({
 
   const safeIndex = playlist.length ? index % playlist.length : 0;
   const currentItem = playlist[safeIndex];
-  const isVideo = currentItem?.kind === "video";
-  const duration = Math.max(2, Number(currentItem?.duration) || 8) * 1000;
+  const duration = (currentItem?.duration || 10) * 1000;
+  // Check if current slide is a video
+  const isVideo = currentItem?.kind === "video" || (layoutOverride as string) === "video";
+
+  // Video overlay configuration resolution
+  const hasVideoOverlay = Boolean(isVideo && activeMotion?.videoOverlay?.enabled !== false);
+  const videoLogoOverride = hasVideoOverlay ? activeMotion?.videoOverlay?.logo : undefined;
+  const videoBfImageOverride = hasVideoOverlay ? activeMotion?.videoOverlay?.blackFridayImage : undefined;
+
+  const effectiveLogoConfig = useMemo(() => {
+    if (!activeMotion) return null;
+    if (isVideo && videoLogoOverride) {
+      return {
+        ...activeMotion.logo,
+        ...videoLogoOverride,
+      };
+    }
+    return activeMotion.logo;
+  }, [activeMotion, isVideo, videoLogoOverride]);
+
+  const effectiveBfImageConfig = useMemo(() => {
+    if (!activeMotion) return undefined;
+    if (isVideo && videoBfImageOverride) {
+      return {
+        ...(activeMotion.blackFridayImage || {}),
+        ...videoBfImageOverride,
+      };
+    }
+    return activeMotion.blackFridayImage;
+  }, [activeMotion, isVideo, videoBfImageOverride]);
+
+  const isSolidBg =
+    (activeMotion?.colorOverrides?.enabled && Boolean(activeMotion?.colorOverrides?.background)) ||
+    activeMotion?.background?.type === "solid";
+
+  const isNoFrame = activeMotion?.visibility?.frame === false;
+  const isLogoVisible =
+    isVideo && videoLogoOverride?.visible !== undefined
+      ? videoLogoOverride.visible
+      : activeMotion?.visibility?.logo !== false && activeMotion?.logo?.visible !== false;
+
+  const isSloganVisible = activeMotion?.visibility?.slogan !== false && activeMotion?.subtitle?.visible !== false;
+  const isDecorationsVisible = activeMotion?.visibility?.decorations !== false;
+  const isBrushCornersVisible =
+    activeMotion?.visibility?.brushCorners !== false &&
+    activeMotion?.fx?.brushCorners?.enabled !== false &&
+    isDecorationsVisible;
+  const isFireSparksVisible =
+    (activeMotion?.fx?.fireSparks?.enabled || activeMotion?.fireSparks?.enabled) &&
+    activeMotion?.visibility?.fireSparks !== false;
+  const isBadgeAllowed = activeMotion?.visibility?.badge !== false && activeMotion?.badge?.visible !== false;
+  const isOldPriceVisible = activeMotion?.visibility?.oldPrice !== false;
+  const isUnitVisible = activeMotion?.visibility?.unit !== false;
+  const isProductNameVisible = activeMotion?.visibility?.productName !== false;
+  const isProductPriceVisible = activeMotion?.visibility?.productPrice !== false;
+  const isProductImageVisible = activeMotion?.visibility?.productImage !== false;
+  const isBlackFridayImageVisible =
+    isVideo && videoBfImageOverride?.visible !== undefined
+      ? videoBfImageOverride.visible
+      : activeMotion?.visibility?.blackFridayImage !== false &&
+        activeMotion?.blackFridayImage?.visible !== false;
+
+  const logoInlineStyle: React.CSSProperties = useMemo(() => {
+    if (!effectiveLogoConfig) return {};
+    const st: React.CSSProperties = {
+      display: isLogoVisible ? "flex" : "none",
+    };
+
+    if (effectiveLogoConfig.position === "custom") {
+      if (effectiveLogoConfig.x !== undefined) st.left = `${effectiveLogoConfig.x}%`;
+      if (effectiveLogoConfig.y !== undefined) st.top = `${effectiveLogoConfig.y}%`;
+      st.right = "auto";
+      st.bottom = "auto";
+    }
+
+    const tx = effectiveLogoConfig.offsetX || 0;
+    const ty = effectiveLogoConfig.offsetY || 0;
+    const sc = effectiveLogoConfig.scale ?? 1;
+    const rot = effectiveLogoConfig.rotation ?? 0;
+    st.transform = `translate(${tx}px, ${ty}px) scale(${sc}) rotate(${rot}deg)`;
+    st.opacity = (effectiveLogoConfig.opacity ?? 100) / 100;
+
+    return st;
+  }, [effectiveLogoConfig, isLogoVisible]);
+
+  const motionStyleOverrides = useMemo(() => {
+    if (!activeMotion) return {};
+    const styles: Record<string, string> = {
+      "--lab-speed-scale": `${1 / (activeMotion.speed || 1)}`,
+      "--lab-logo-size": `${effectiveLogoConfig?.size || activeMotion.logo.size}px`,
+      "--lab-logo-x": `${effectiveLogoConfig?.offsetX || activeMotion.logo.offsetX || 0}px`,
+      "--lab-logo-y": `${effectiveLogoConfig?.offsetY || activeMotion.logo.offsetY || 0}px`,
+      "--lab-logo-display": isLogoVisible ? "flex" : "none",
+      "--lab-sector-text-size": `${effectiveLogoConfig?.sectorTextSize || activeMotion.logo.sectorTextSize}px`,
+      "--lab-sector-text-x": `${effectiveLogoConfig?.sectorOffsetX || activeMotion.logo.sectorOffsetX || 0}px`,
+      "--lab-sector-text-y": `${effectiveLogoConfig?.sectorOffsetY || activeMotion.logo.sectorOffsetY || 0}px`,
+      "--lab-subtitle-size": `${activeMotion.subtitle?.fontSize ?? 22}px`,
+      "--lab-subtitle-x": `${activeMotion.subtitle?.offsetX || 0}px`,
+      "--lab-subtitle-y": `${activeMotion.subtitle?.offsetY || 0}px`,
+      "--lab-subtitle-color": activeMotion.subtitle?.color || "#111111",
+      "--lab-subtitle-display": isSloganVisible ? "flex" : "none",
+      "--lab-brush-corners-display": isBrushCornersVisible ? "block" : "none",
+      "--lab-brush-corners-opacity": `${(activeMotion.fx?.brushCorners?.opacity ?? 100) / 100}`,
+      "--lab-brush-corners-scale": `${activeMotion.fx?.brushCorners?.scale ?? 1}`,
+      "--lab-badge-rotation": `${activeMotion.badge.rotation}deg`,
+      "--lab-badge-size": `${activeMotion.badge.size || 70}px`,
+      "--lab-badge-scale": `${(activeMotion.badge.size || 70) / 70}`,
+      "--lab-badge-display": isBadgeAllowed ? "inline-flex" : "none",
+      "--lab-ambient-speed": `${activeMotion.ambient.speed}s`,
+      "--lab-ambient-opacity": `${activeMotion.ambient.opacity / 100}`,
+      "--lab-shimmer-display": activeMotion.pricePhysics.shimmer ? "block" : "none",
+    };
+
+    // Normalized Logo Positioning & Transform
+    if (effectiveLogoConfig?.x !== undefined) styles["--lab-logo-left"] = `${effectiveLogoConfig.x}%`;
+    if (effectiveLogoConfig?.y !== undefined) styles["--lab-logo-top"] = `${effectiveLogoConfig.y}%`;
+    styles["--lab-logo-scale"] = `${effectiveLogoConfig?.scale ?? 1}`;
+    styles["--lab-logo-opacity"] = `${(effectiveLogoConfig?.opacity ?? 100) / 100}`;
+    styles["--lab-logo-rotation"] = `${effectiveLogoConfig?.rotation ?? 0}deg`;
+
+    if (effectiveLogoConfig?.sectorTextColor) {
+      styles["--lab-sector-text-color"] = effectiveLogoConfig.sectorTextColor;
+    }
+
+    // Custom Color Overrides (Explicit overrides)
+    if (activeMotion.colorOverrides?.enabled) {
+      const co = activeMotion.colorOverrides;
+      if (co.background) {
+        styles["--bf-custom-bg"] = co.background;
+        styles["--lab-custom-bg"] = co.background;
+        styles["--theme-screen-background"] = co.background;
+        styles["--theme-shell-background"] = co.background;
+      }
+      if (co.productName) {
+        styles["--bf-custom-name-color"] = co.productName;
+        styles["--theme-product-name-color"] = co.productName;
+      }
+      if (co.price) {
+        styles["--bf-custom-price-color"] = co.price;
+        styles["--theme-price-color"] = co.price;
+      }
+      if (co.priceCents) {
+        styles["--bf-custom-cents-color"] = co.priceCents;
+        styles["--theme-price-cents-color"] = co.priceCents;
+      }
+      if (co.currency) {
+        styles["--bf-custom-currency-color"] = co.currency;
+        styles["--theme-price-currency-color"] = co.currency;
+      }
+      if (co.unit) {
+        styles["--bf-custom-unit-color"] = co.unit;
+        styles["--theme-price-unit-color"] = co.unit;
+      }
+      if (co.oldPrice) {
+        styles["--bf-custom-oldprice-color"] = co.oldPrice;
+        styles["--theme-oldprice-color"] = co.oldPrice;
+      }
+      if (co.strikeColor) {
+        styles["--bf-custom-strike-color"] = co.strikeColor;
+        styles["--theme-strike-color"] = co.strikeColor;
+      }
+      if (co.capsuleBg) styles["--bf-custom-capsule-bg"] = co.capsuleBg;
+      if (co.capsuleText) styles["--bf-custom-capsule-text"] = co.capsuleText;
+      if (co.sectorText) {
+        styles["--bf-custom-sector-color"] = co.sectorText;
+        styles["--lab-sector-text-color"] = co.sectorText;
+      }
+      if (co.badgeBg) styles["--bf-custom-badge-bg"] = co.badgeBg;
+      if (co.badgeText) styles["--bf-custom-badge-text"] = co.badgeText;
+      if (co.fontFamily) styles["--theme-product-font-family"] = co.fontFamily;
+      if (co.fontFamilyPrice) styles["--theme-price-font-family"] = co.fontFamilyPrice;
+      if (co.fontWeightName) styles["--theme-product-name-weight"] = String(co.fontWeightName);
+      if (co.fontWeightPrice) styles["--theme-price-weight"] = String(co.fontWeightPrice);
+      if (co.priceShadow !== undefined) styles["--theme-price-shadow"] = co.priceShadow;
+    } else if (activeMotion.background) {
+      // General background override (Solid, Gradient, Image)
+      if (activeMotion.background.type === "image" && activeMotion.background.imageUrl) {
+        const bgImg = `url(${activeMotion.background.imageUrl})`;
+        styles["--lab-custom-bg-image"] = bgImg;
+        styles["--lab-custom-bg"] = `${bgImg} center/cover no-repeat`;
+        styles["--bf-custom-bg"] = `${bgImg} center/cover no-repeat`;
+        styles["--theme-screen-background"] = `${bgImg} center/cover no-repeat`;
+      } else if (activeMotion.background.type === "solid" && activeMotion.background.color) {
+        styles["--lab-custom-bg"] = activeMotion.background.color;
+        styles["--bf-custom-bg"] = activeMotion.background.color;
+        styles["--theme-screen-background"] = activeMotion.background.color;
+        styles["--theme-shell-background"] = activeMotion.background.color;
+      } else if (activeMotion.background.type === "gradient") {
+        const grad = `linear-gradient(${activeMotion.background.gradientAngle || 135}deg, ${activeMotion.background.gradientStart || "#1a0407"}, ${activeMotion.background.gradientEnd || "#050608"})`;
+        styles["--lab-custom-bg"] = grad;
+        styles["--bf-custom-bg"] = grad;
+        styles["--theme-screen-background"] = grad;
+        styles["--theme-shell-background"] = grad;
+      }
+    }
+
+    if (isSolidBg && (!activeMotion.colorOverrides?.enabled || activeMotion.colorOverrides.priceShadow === undefined)) {
+      styles["--theme-price-shadow"] = "none";
+    }
+
+    // Layout Tuning Overrides
+    if (activeMotion.layoutTuning) {
+      const activeLayoutRaw =
+        layoutOverride ||
+        (currentItem?.kind === "composition"
+          ? currentItem.composition.layout || activeMotion.layout
+          : currentItem?.kind === "offer"
+            ? currentItem.offer.layout || activeMotion.layout || "hero"
+            : activeMotion.layout || "hero");
+
+      const targetLayout = normalizeOfferLayout(activeLayoutRaw);
+      const tuning = activeMotion.layoutTuning[targetLayout];
+      if (tuning) {
+        if (tuning.productName) {
+          if (tuning.productName.fontSizeOffset !== undefined) styles["--layout-name-size"] = `${tuning.productName.fontSizeOffset}px`;
+          if (tuning.productName.x !== undefined) styles["--layout-name-x"] = `${tuning.productName.x}px`;
+          if (tuning.productName.y !== undefined) styles["--layout-name-y"] = `${tuning.productName.y}px`;
+        }
+        if (tuning.promotionalPrice) {
+          if (tuning.promotionalPrice.fontSizeOffset !== undefined) styles["--layout-price-size"] = `${tuning.promotionalPrice.fontSizeOffset}px`;
+          if (tuning.promotionalPrice.x !== undefined) styles["--layout-price-x"] = `${tuning.promotionalPrice.x}px`;
+          if (tuning.promotionalPrice.y !== undefined) styles["--layout-price-y"] = `${tuning.promotionalPrice.y}px`;
+        }
+        if (tuning.oldPrice) {
+          if (tuning.oldPrice.fontSizeOffset !== undefined) styles["--layout-oldprice-size"] = `${tuning.oldPrice.fontSizeOffset}px`;
+          if (tuning.oldPrice.x !== undefined) styles["--layout-oldprice-x"] = `${tuning.oldPrice.x}px`;
+          if (tuning.oldPrice.y !== undefined) styles["--layout-oldprice-y"] = `${tuning.oldPrice.y}px`;
+        }
+        if (tuning.productImage) {
+          if (tuning.productImage.scale !== undefined) styles["--layout-img-scale"] = `${tuning.productImage.scale}`;
+          if (tuning.productImage.x !== undefined) styles["--layout-img-x"] = `${tuning.productImage.x}px`;
+          if (tuning.productImage.y !== undefined) styles["--layout-img-y"] = `${tuning.productImage.y}px`;
+        }
+        if (tuning.columnRatio !== undefined) {
+          const ratio = tuning.columnRatio;
+          styles["--layout-cols"] = `${(1 - ratio).toFixed(2)}fr ${ratio.toFixed(2)}fr`;
+        }
+        if (tuning.gap !== undefined) {
+          styles["--layout-gap"] = `${tuning.gap}px`;
+        }
+        if (tuning.itemGap !== undefined) {
+          styles["--layout-item-gap"] = `${tuning.itemGap}px`;
+        }
+      }
+    }
+
+    return styles as React.CSSProperties;
+  }, [activeMotion, effectiveTheme, layoutOverride, currentItem, isLogoVisible, isSloganVisible, isDecorationsVisible, isBadgeAllowed, isSolidBg]);
+
+  const motionClassNames = useMemo(() => {
+    if (!activeMotion) return "";
+    const cardStyle = activeMotion.productCard?.style || "transparent";
+    const nameAnim = activeMotion.elementAnimations?.nameAnimation || "slide-up";
+    const priceAnim = activeMotion.elementAnimations?.priceAnimation || "impact";
+    const imgAnim = activeMotion.elementAnimations?.imageAnimation || "float";
+    const choreo = activeMotion.elementAnimations?.choreography || "staggered";
+
+    return `lab-pos-${activeMotion.logo.position} lab-sector-${activeMotion.logo.sectorLayout} lab-impact-${activeMotion.pricePhysics.impact} lab-card-${cardStyle} anim-name-${nameAnim} anim-price-${priceAnim} anim-image-${imgAnim} choreo-${choreo}`;
+  }, [activeMotion]);
   const currentExitPreset: ExitPreset =
     (activeMotion?.exitPreset as ExitPreset) || getExitPresetForItem(currentItem?.kind);
 
@@ -406,11 +597,14 @@ export function TvPlayer({
 
   function renderSlideContent(item: TvPlaylistItem) {
     if (item.kind === "composition") {
+      const activeCompositionOffers = item.composition.offers.filter((o) => o.active && isEligible(o));
+      if (activeCompositionOffers.length === 0) return null;
+
       return (
         <OfferSlide
           key={`comp-${item.id}`}
-          offers={item.composition.offers}
-          layout={layoutOverride || item.composition.layout}
+          offers={activeCompositionOffers}
+          layout={layoutOverride || item.composition.layout || activeMotion?.layout}
           paused={paused}
           badgeLabel={activeMotion?.badge.text || effectiveTheme.tokens.badge.label}
           badgeType={activeMotion?.badge.type || "text"}
@@ -419,6 +613,13 @@ export function TvPlayer({
           badgePosition={activeMotion?.badge.position || "top-right"}
           badgeOffsetX={activeMotion?.badge.offsetX || 0}
           badgeOffsetY={activeMotion?.badge.offsetY || 0}
+          badgeVisible={isBadgeAllowed}
+          showProductName={isProductNameVisible}
+          showProductPrice={isProductPriceVisible}
+          showOldPrice={isOldPriceVisible}
+          showUnit={isUnitVisible}
+          showBadge={isBadgeAllowed}
+          showProductImage={isProductImageVisible}
           cardStyle={activeMotion?.productCard?.style || "transparent"}
         />
       );
@@ -430,7 +631,7 @@ export function TvPlayer({
           key={`offer-${item.id}`}
           offer={item.offer}
           offers={eligibleOffers}
-          layout={layoutOverride || item.offer.layout}
+          layout={layoutOverride || item.offer.layout || activeMotion?.layout}
           paused={paused}
           badgeLabel={activeMotion?.badge.text || effectiveTheme.tokens.badge.label}
           badgeType={activeMotion?.badge.type || "text"}
@@ -439,6 +640,13 @@ export function TvPlayer({
           badgePosition={activeMotion?.badge.position || "top-right"}
           badgeOffsetX={activeMotion?.badge.offsetX || 0}
           badgeOffsetY={activeMotion?.badge.offsetY || 0}
+          badgeVisible={isBadgeAllowed}
+          showProductName={isProductNameVisible}
+          showProductPrice={isProductPriceVisible}
+          showOldPrice={isOldPriceVisible}
+          showUnit={isUnitVisible}
+          showBadge={isBadgeAllowed}
+          showProductImage={isProductImageVisible}
           cardStyle={activeMotion?.productCard?.style || "transparent"}
         />
       );
@@ -483,19 +691,44 @@ export function TvPlayer({
 
   if (mode === "tv") {
     return (
+      <TvViewport viewportRef={shell}>
       <div
-        className={`tv-shell ${motionClassNames}`}
+        className={`tv-shell ${motionClassNames} ${isNoFrame ? "no-frame" : ""}`}
         data-theme={effectiveTheme.slug}
+        data-solid-bg={isSolidBg ? "true" : undefined}
         data-animation-intensity={effectiveTheme.tokens.animationIntensity}
         style={{ ...themeStyle, ...motionStyleOverrides }}
-        ref={shell}
+
         onDoubleClick={toggleFullscreen}
         title="Dê um duplo clique ou pressione F para tela cheia"
       >
-        <div className="tv-top-brand">
-          <img src={logoImageSrc} alt="Supermercado Sol" className="tv-brand-logo" />
-          <span className="tv-brand-sector-text">{sectorTitle}</span>
-        </div>
+        {isLogoVisible && effectiveLogoConfig && (
+          <div
+            className={`tv-top-brand ${effectiveLogoConfig.position ? `lab-pos-${effectiveLogoConfig.position}` : ""}`}
+            style={logoInlineStyle}
+          >
+            <img
+              src={logoImageSrc}
+              alt="Supermercado Sol"
+              className="tv-brand-logo"
+              style={{
+                width: `${effectiveLogoConfig.size}px`,
+              }}
+            />
+            {effectiveLogoConfig.sectorLayout !== "hidden" && (
+              <span
+                className="tv-brand-sector-text"
+                style={{
+                  color: effectiveLogoConfig.sectorTextColor,
+                  fontSize: `${effectiveLogoConfig.sectorTextSize}px`,
+                  transform: `translate(${effectiveLogoConfig.sectorOffsetX || 0}px, ${effectiveLogoConfig.sectorOffsetY || 0}px)`,
+                }}
+              >
+                {sectorTitle}
+              </span>
+            )}
+          </div>
+        )}
         <div className="tv-screen">
           {currentItem ? (
             <div
@@ -503,6 +736,34 @@ export function TvPlayer({
               className={`tv-screen-content ${getTransitionClasses(activeTransitionPreset, isExiting, currentExitPreset)} ${paintPhase === "revealing" ? "slide-enter-paint-swipe" : ""}`}
             >
               {renderSlideContent(currentItem)}
+
+              {/* Black Friday — Cartaz Digital Framing & Signature (Sincronizado com a transição da oferta) */}
+              {effectiveTheme.slug === "black-friday" && (
+                <>
+                  <BlackFridayImageElement
+                    config={effectiveBfImageConfig}
+                    visible={isBlackFridayImageVisible}
+                  />
+                  {isBrushCornersVisible && (
+                    <div className="bf-screen-brush-corners" aria-hidden="true">
+                      <div className="bf-brush-corner bf-brush-tl" />
+                      <div className="bf-brush-corner bf-brush-bl" />
+                      <div className="bf-brush-corner bf-brush-tr" />
+                      <div className="bf-brush-corner bf-brush-br" />
+                    </div>
+                  )}
+                  {isSloganVisible && (
+                    <div className="bf-signature-slogan" aria-hidden="true">
+                      <span>{activeMotion?.subtitle?.text || "Qualidade para o seu dia."}</span>
+                      {activeMotion?.subtitle?.showBrush !== false && (
+                        <svg className="bf-slogan-brush" viewBox="0 0 160 10" fill="none">
+                          <path d="M2 6C40 2 120 3 158 7" stroke="#F2381E" strokeWidth="2.5" strokeLinecap="round" opacity="0.85" />
+                        </svg>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           ) : (
             <div className="empty-state">
@@ -519,7 +780,7 @@ export function TvPlayer({
             colorMode={paintColorMode}
             speed={paintSpeed}
           />
-          <BlackFridayDecorations fx={activeMotion?.fx} />
+          {isDecorationsVisible && <BlackFridayDecorations fx={activeMotion?.fx} />}
         </div>
         <div
           className="progress"
@@ -528,6 +789,7 @@ export function TvPlayer({
           }}
         />
       </div>
+      </TvViewport>
     );
   }
 
@@ -546,7 +808,7 @@ export function TvPlayer({
             type="button"
             className="btn btn-secondary"
             disabled={!currentItem}
-            onClick={() => setPaused((p) => !p)}
+            onClick={() => setInternalPaused((p) => !p)}
           >
             {paused ? "Continuar" : "Pausar"}
           </button>
@@ -568,17 +830,42 @@ export function TvPlayer({
         </div>
       </div>
       {error && <p role="alert">{error}</p>}
+      <TvViewport viewportRef={shell}>
       <div
-        className={`tv-shell ${motionClassNames}`}
+        className={`tv-shell ${motionClassNames} ${isNoFrame ? "no-frame" : ""}`}
         data-theme={effectiveTheme.slug}
+        data-solid-bg={isSolidBg ? "true" : undefined}
         data-animation-intensity={effectiveTheme.tokens.animationIntensity}
         style={{ ...themeStyle, ...motionStyleOverrides }}
-        ref={shell}
+
       >
-        <div className="tv-top-brand">
-          <img src={logoImageSrc} alt="Supermercado Sol" className="tv-brand-logo" />
-          <span className="tv-brand-sector-text">{sectorTitle}</span>
-        </div>
+        {isLogoVisible && effectiveLogoConfig && (
+          <div
+            className={`tv-top-brand ${effectiveLogoConfig.position ? `lab-pos-${effectiveLogoConfig.position}` : ""}`}
+            style={logoInlineStyle}
+          >
+            <img
+              src={logoImageSrc}
+              alt="Supermercado Sol"
+              className="tv-brand-logo"
+              style={{
+                width: `${effectiveLogoConfig.size}px`,
+              }}
+            />
+            {effectiveLogoConfig.sectorLayout !== "hidden" && (
+              <span
+                className="tv-brand-sector-text"
+                style={{
+                  color: effectiveLogoConfig.sectorTextColor,
+                  fontSize: `${effectiveLogoConfig.sectorTextSize}px`,
+                  transform: `translate(${effectiveLogoConfig.sectorOffsetX || 0}px, ${effectiveLogoConfig.sectorOffsetY || 0}px)`,
+                }}
+              >
+                {sectorTitle}
+              </span>
+            )}
+          </div>
+        )}
         <div className="tv-screen">
           {currentItem ? (
             <div
@@ -586,6 +873,34 @@ export function TvPlayer({
               className={`tv-screen-content ${getTransitionClasses(activeTransitionPreset, isExiting, currentExitPreset)} ${paintPhase === "revealing" ? "slide-enter-paint-swipe" : ""}`}
             >
               {renderSlideContent(currentItem)}
+
+              {/* Black Friday — Cartaz Digital Framing & Signature (Sincronizado com a transição da oferta) */}
+              {effectiveTheme.slug === "black-friday" && (
+                <>
+                  <BlackFridayImageElement
+                    config={effectiveBfImageConfig}
+                    visible={isBlackFridayImageVisible}
+                  />
+                  {isBrushCornersVisible && (
+                    <div className="bf-screen-brush-corners" aria-hidden="true">
+                      <div className="bf-brush-corner bf-brush-tl" />
+                      <div className="bf-brush-corner bf-brush-bl" />
+                      <div className="bf-brush-corner bf-brush-tr" />
+                      <div className="bf-brush-corner bf-brush-br" />
+                    </div>
+                  )}
+                  {isSloganVisible && (
+                    <div className="bf-signature-slogan" aria-hidden="true">
+                      <span>{activeMotion?.subtitle?.text || "Qualidade para o seu dia."}</span>
+                      {activeMotion?.subtitle?.showBrush !== false && (
+                        <svg className="bf-slogan-brush" viewBox="0 0 160 10" fill="none">
+                          <path d="M2 6C40 2 120 3 158 7" stroke="#F2381E" strokeWidth="2.5" strokeLinecap="round" opacity="0.85" />
+                        </svg>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           ) : (
             <div className="empty-state">
@@ -604,7 +919,21 @@ export function TvPlayer({
             colorMode={paintColorMode}
             speed={paintSpeed}
           />
-          <BlackFridayDecorations fx={activeMotion?.fx} />
+          {isDecorationsVisible && <BlackFridayDecorations fx={activeMotion?.fx} />}
+          {isFireSparksVisible && (
+            <FireSparks
+              enabled={true}
+              intensity={activeMotion?.fx?.fireSparks?.intensity || activeMotion?.fireSparks?.intensity || "commercial"}
+              particleCount={activeMotion?.fx?.fireSparks?.particleCount ?? activeMotion?.fireSparks?.particleCount}
+              speed={activeMotion?.fx?.fireSparks?.speed ?? activeMotion?.fireSparks?.speed ?? 1}
+              size={activeMotion?.fx?.fireSparks?.size ?? activeMotion?.fireSparks?.size ?? 1}
+              bottomGlow={activeMotion?.fx?.fireSparks?.bottomGlow ?? activeMotion?.fireSparks?.bottomGlow ?? true}
+              bottomGlowOpacity={activeMotion?.fx?.fireSparks?.bottomGlowOpacity ?? activeMotion?.fireSparks?.bottomGlowOpacity ?? 25}
+              maxHeight={activeMotion?.fx?.fireSparks?.maxHeight ?? activeMotion?.fireSparks?.maxHeight ?? 105}
+              performance={activeMotion?.fx?.fireSparks?.performance || activeMotion?.fireSparks?.performance || "normal"}
+              zIndex={2}
+            />
+          )}
         </div>
         <div
           className="progress"
@@ -613,6 +942,7 @@ export function TvPlayer({
           }}
         />
       </div>
+      </TvViewport>
       <div className="player-footer">
         <span>
           {currentItem
@@ -630,3 +960,4 @@ export function TvPlayer({
     </div>
   );
 }
+

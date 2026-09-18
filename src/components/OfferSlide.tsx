@@ -29,6 +29,13 @@ export function OfferSlide({
   badgePosition = "top-right",
   badgeOffsetX = 0,
   badgeOffsetY = 0,
+  badgeVisible = true,
+  showProductName = true,
+  showProductPrice = true,
+  showOldPrice = true,
+  showUnit = true,
+  showBadge = true,
+  showProductImage = true,
   cardStyle = "transparent",
 }: {
   offer?: Offer;
@@ -42,6 +49,13 @@ export function OfferSlide({
   badgePosition?: BadgePosition;
   badgeOffsetX?: number;
   badgeOffsetY?: number;
+  badgeVisible?: boolean;
+  showProductName?: boolean;
+  showProductPrice?: boolean;
+  showOldPrice?: boolean;
+  showUnit?: boolean;
+  showBadge?: boolean;
+  showProductImage?: boolean;
   cardStyle?: "transparent" | "card" | "glass" | "bordered";
 }) {
   const fallbackOffer = offer || offers?.[0];
@@ -84,6 +98,13 @@ export function OfferSlide({
           badgePosition={badgePosition}
           badgeOffsetX={badgeOffsetX}
           badgeOffsetY={badgeOffsetY}
+          badgeVisible={badgeVisible}
+          showProductName={showProductName}
+          showProductPrice={showProductPrice}
+          showOldPrice={showOldPrice}
+          showUnit={showUnit}
+          showBadge={showBadge}
+          showProductImage={showProductImage}
           cardStyle={cardStyle}
           animationDelay={`${idx * 0.1}s`}
         />

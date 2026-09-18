@@ -35,6 +35,7 @@ export type Offer = {
   active: boolean;
   displayOrder: number;
   layout: LegacyOfferLayout;
+  imageScale?: number;
 };
 
 import type { OfferComposition } from "./offers/compositions";

@@ -1,10 +1,26 @@
 import { useMemo, useRef, useState, useEffect } from "react";
-import { Maximize2, Minimize2, Play, Copy, Check } from "lucide-react";
+import {
+  Maximize2,
+  Minimize2,
+  Play,
+  Pause,
+  Copy,
+  Check,
+  Tv,
+  Database,
+  LayoutGrid,
+  Sliders,
+  ZoomIn,
+} from "lucide-react";
 import { TvPlayer } from "../TvPlayer";
-import { contentFromData, seedOffers } from "../../data";
+import { contentFromData, seedOffers, SECTORS } from "../../data";
 import { resolveTheme } from "../../themes/resolveTheme";
-import type { MotionConfig } from "../../motion/types";
-import type { Offer } from "../../types";
+import { cachedContent, databaseConfigured, loadTvContent, subscribeToTvContent } from "../../supabase";
+import type { MotionConfig, PerLayoutTuning } from "../../motion/types";
+import type { Offer, TvContent } from "../../types";
+import type { OfferLayout } from "../../offers/layouts";
+import { InteractiveLayoutOverlay } from "./InteractiveLayoutOverlay";
+import { formatCompleteTuningExport } from "../../motion/layoutTuningFormatter";
 
 export type MotionPreviewProps = {
   config: MotionConfig;
@@ -14,6 +30,13 @@ export type MotionPreviewProps = {
   onSpeedChange: (speed: number) => void;
   onCopyConfig: () => void;
   copied: boolean;
+  onLayoutChange?: (layout: OfferLayout) => void;
+  onUpdateConfig?: (updater: (prev: MotionConfig) => MotionConfig) => void;
+  onUpdateLayoutTuning?: (layout: OfferLayout, updater: (prev: PerLayoutTuning) => PerLayoutTuning) => void;
+  onResetLayoutTuning?: (layout: OfferLayout) => void;
+  onSaveLayoutToTv?: () => void;
+  sector?: string;
+  onSectorChange?: (sector: string) => void;
 };
 
 const STUDIO_PRODUCT_OFFERS = [
@@ -114,9 +137,111 @@ export function MotionPreview({
   onSpeedChange,
   onCopyConfig,
   copied,
+  onLayoutChange,
+  onUpdateConfig,
+  onUpdateLayoutTuning,
+  onResetLayoutTuning,
+  onSaveLayoutToTv,
+  sector = "acougue",
+  onSectorChange,
 }: MotionPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [previewSector, setPreviewSector] = useState<string>(sector);
+  const [useRealData, setUseRealData] = useState<boolean>(true);
+  const [realContent, setRealContent] = useState<TvContent>(() => cachedContent(sector));
+  const [isInteractiveMode, setIsInteractiveMode] = useState<boolean>(true);
+  const [isPaused, setIsPaused] = useState<boolean>(true);
+  const [tuningCopied, setTuningCopied] = useState<boolean>(false);
+  const [tuningSaved, setTuningSaved] = useState<boolean>(false);
+  const [zoom, setZoom] = useState<"fit" | "50" | "75" | "100" | "125">("fit");
+
+  // Keep previewSector synchronized with parent sector
+  useEffect(() => {
+    if (sector && sector !== previewSector) {
+      setPreviewSector(sector);
+    }
+  }, [sector]);
+
+  // Realtime subscription to live TV data for the selected sector
+  useEffect(() => {
+    setRealContent(cachedContent(previewSector));
+
+    if (!databaseConfigured) return;
+
+    loadTvContent(previewSector, true)
+      .then((data) => {
+        setRealContent(data);
+      })
+      .catch((err) => {
+        console.error("[MotionPreview] Erro ao carregar TV:", err);
+      });
+
+    const unsubscribe = subscribeToTvContent(
+      previewSector,
+      (data) => {
+        setRealContent(data);
+      },
+      () => {},
+      true
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [previewSector]);
+
+  const sampleVideoUrl =
+    realContent.media.find((m) => m.type === "video")?.mediaUrl ||
+    "https://cdn.coverr.co/videos/coverr-a-chef-preparing-meat-1577/1080p.mp4";
+
+  const videoContent = useMemo((): TvContent => {
+    return {
+      sector: previewSector,
+      offers: [],
+      media: [
+        {
+          id: "preview-video-slide",
+          type: "video",
+          title: "Vídeo Institucional / Ofertas",
+          mediaUrl: sampleVideoUrl,
+          sector: previewSector,
+          duration: 15,
+          position: 0,
+          active: true,
+        },
+      ],
+      compositions: [],
+      playlist: [
+        {
+          id: "preview-video-slide",
+          kind: "video",
+          title: "Vídeo Institucional / Ofertas",
+          src: sampleVideoUrl,
+          duration: 15,
+          position: 0,
+          active: true,
+        },
+      ],
+      publishedAt: new Date().toISOString(),
+    };
+  }, [previewSector, sampleVideoUrl]);
+
+  // Determine active content (real TV content, demo fallback, or video preview)
+  const activeContent = useMemo(() => {
+    if ((config.layout as string) === "video") {
+      return videoContent;
+    }
+    if (!useRealData) {
+      return studioContent;
+    }
+    return realContent;
+  }, [config.layout, videoContent, useRealData, realContent]);
+
+  const currentSectorLabel = useMemo(() => {
+    const match = SECTORS.find((s) => s.id === previewSector);
+    return match?.label || previewSector.toUpperCase();
+  }, [previewSector]);
 
   // Base theme resolution
   const baseTheme = resolveTheme(config.themeSlug);
@@ -159,6 +284,26 @@ export function MotionPreview({
     config.pricePhysics.shimmer,
   ]);
 
+  // Handle Copy of Layout CSS & JSON
+  const handleCopyLayoutCssAndJson = () => {
+    const text = formatCompleteTuningExport(
+      config.layout,
+      config.layoutTuning?.[config.layout],
+      config.layoutTuning
+    );
+    void navigator.clipboard.writeText(text);
+    setTuningCopied(true);
+    setTimeout(() => setTuningCopied(false), 2600);
+  };
+
+  const handleSaveToTv = () => {
+    if (onSaveLayoutToTv) {
+      onSaveLayoutToTv();
+      setTuningSaved(true);
+      setTimeout(() => setTuningSaved(false), 2600);
+    }
+  };
+
   // Fullscreen handlers
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
@@ -175,15 +320,24 @@ export function MotionPreview({
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Toggle fullscreen with 'f' if not inside an input/textarea
       const target = e.target as HTMLElement;
       if (
-        (e.key === "f" || e.key === "F") &&
-        target.tagName !== "INPUT" &&
-        target.tagName !== "TEXTAREA" &&
-        target.tagName !== "SELECT"
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT"
       ) {
+        return;
+      }
+
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
         toggleFullscreen();
+      } else if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        setIsPaused((p) => !p);
+      } else if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        onReplay();
       }
     };
 
@@ -193,7 +347,36 @@ export function MotionPreview({
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [onReplay]);
+
+  const LAYOUT_OPTIONS: Array<{ id: OfferLayout | "video"; label: string }> = [
+    { id: "hero", label: "1 Prod (Hero)" },
+    { id: "duo", label: "2 Prods (Duo)" },
+    { id: "trio", label: "3 Prods (Trio)" },
+    { id: "grid4", label: "4 Prods (Grid 4)" },
+    { id: "grid8", label: "8 Prods (Grid 8)" },
+    { id: "video", label: "🎬 Vídeo" },
+  ];
+
+  const ZOOM_OPTIONS: Array<{ id: "fit" | "50" | "75" | "100" | "125"; label: string }> = [
+    { id: "fit", label: "Ajustar" },
+    { id: "50", label: "50%" },
+    { id: "75", label: "75%" },
+    { id: "100", label: "100%" },
+    { id: "125", label: "125%" },
+  ];
+
+  const monitorZoomStyle: React.CSSProperties = useMemo(() => {
+    if (isFullscreen || zoom === "fit") {
+      return { position: "relative", width: "100%", maxWidth: "1100px" };
+    }
+    const factor = Number(zoom) / 100;
+    return {
+      position: "relative",
+      width: `${Math.round(1100 * factor)}px`,
+      maxWidth: "100%",
+    };
+  }, [isFullscreen, zoom]);
 
   return (
     <main className="motion-preview-area">
@@ -201,17 +384,97 @@ export function MotionPreview({
       <div className="preview-top-meta">
         <div className="preview-meta-left">
           <span className="live-pulse-dot" />
-          <span className="meta-badge-live">CANVAS AO VIVO (16:9)</span>
-          {activePresetName && (
-            <span className="meta-preset-badge">Preset: <strong>{activePresetName}</strong></span>
-          )}
-          <span className="meta-details">
-            Tema: {baseTheme.name} · Layout: {config.layout.toUpperCase()}
-          </span>
+          <span className="meta-badge-live">CANVAS 16:9</span>
+
+          {/* Layout Selector Bar */}
+          <div className="preview-layout-switcher">
+            <LayoutGrid size={12} className="meta-icon" style={{ color: "var(--accent)" }} />
+            {LAYOUT_OPTIONS.map((lo) => (
+              <button
+                key={lo.id}
+                type="button"
+                className={`layout-switch-btn ${config.layout === lo.id ? "active" : ""}`}
+                onClick={() => {
+                  if (onLayoutChange) {
+                    onLayoutChange(lo.id as OfferLayout);
+                  }
+                }}
+                title={`Visualizar e ajustar layout com ${lo.label}`}
+              >
+                {lo.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Zoom Selector Bar */}
+          <div className="preview-zoom-switcher">
+            <ZoomIn size={12} className="meta-icon" />
+            {ZOOM_OPTIONS.map((zo) => (
+              <button
+                key={zo.id}
+                type="button"
+                className={`zoom-switch-btn ${zoom === zo.id ? "active" : ""}`}
+                onClick={() => setZoom(zo.id)}
+                title={`Zoom do canvas: ${zo.label}`}
+              >
+                {zo.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Interactive Mode Toggle */}
+          <button
+            type="button"
+            className={`interactive-mode-toggle-btn ${isInteractiveMode ? "active" : ""}`}
+            onClick={() => setIsInteractiveMode((prev) => !prev)}
+            title="Ativar/Desativar ajuste interativo com mouse na tela"
+          >
+            <Sliders size={12} />
+            <span>{isInteractiveMode ? "Ajuste com Mouse: ON" : "Ajuste com Mouse: OFF"}</span>
+          </button>
+
+          {/* Sector Selector Pill */}
+          <div className="preview-sector-pill-wrapper">
+            <Tv size={12} className="meta-icon" />
+            <select
+              className="preview-sector-select"
+              value={previewSector}
+              onChange={(e) => {
+                setPreviewSector(e.target.value);
+                if (onSectorChange) {
+                  onSectorChange(e.target.value);
+                }
+              }}
+              title="Selecione o setor da TV para pré-visualizar"
+            >
+              {SECTORS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  TV {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Real vs Mock Data Toggle */}
+          <button
+            type="button"
+            className={`preview-source-btn ${useRealData ? "active" : ""}`}
+            onClick={() => setUseRealData((prev) => !prev)}
+            title={
+              useRealData
+                ? "Exibindo dados reais cadastrados na TV. Clique para usar produtos de teste."
+                : "Exibindo produtos de teste. Clique para usar os dados reais da TV."
+            }
+          >
+            <Database size={11} />
+            <span>{useRealData ? "TV Real" : "Modo Teste"}</span>
+          </button>
         </div>
 
         <div className="preview-meta-right">
-          <span className="shortcut-tip">Pressione <kbd>F</kbd> para tela cheia</span>
+          <span className="shortcut-tip">
+            <kbd>Espaço</kbd> Pausar · <kbd>R</kbd> Replay · <kbd>F</kbd> Tela Cheia · <kbd>H</kbd> Modo Limpo
+          </span>
         </div>
       </div>
 
@@ -220,6 +483,7 @@ export function MotionPreview({
         ref={containerRef}
         className={`motion-preview-monitor ${isFullscreen ? "is-fullscreen" : ""}`}
         onDoubleClick={toggleFullscreen}
+        style={monitorZoomStyle}
       >
         <div
           className={`motion-lab-player-wrapper lab-pos-${config.logo.position} lab-sector-${config.logo.sectorLayout} lab-impact-${config.pricePhysics.impact}`}
@@ -227,15 +491,43 @@ export function MotionPreview({
           key={`motion-preview-key-${replayKey}`}
         >
           <TvPlayer
-            content={studioContent}
+            content={activeContent}
             mode="preview"
             connection="online"
-            sectorLabel={config.logo.sectorText}
+            sectorLabel={config.logo.sectorText || currentSectorLabel}
             theme={studioTheme}
             layoutOverride={config.layout}
             motionConfig={config}
+            paused={isPaused}
           />
         </div>
+
+        {/* Interactive Layout Overlay */}
+        {isInteractiveMode && (
+          <InteractiveLayoutOverlay
+            layout={config.layout}
+            config={config}
+            onUpdateConfig={onUpdateConfig}
+            tuning={config.layoutTuning?.[config.layout] || {}}
+            onUpdateTuning={(updater) => {
+              if (onUpdateLayoutTuning) {
+                onUpdateLayoutTuning(config.layout, updater);
+              }
+            }}
+            onCopyCssAndJson={handleCopyLayoutCssAndJson}
+            onSaveToTv={handleSaveToTv}
+            onResetLayout={() => {
+              if (onResetLayoutTuning) {
+                onResetLayoutTuning(config.layout);
+              }
+            }}
+            copied={tuningCopied}
+            saved={tuningSaved}
+            isPaused={isPaused}
+            onTogglePause={() => setIsPaused((p) => !p)}
+            containerRef={containerRef}
+          />
+        )}
 
         {/* Floating Quick Fullscreen Trigger */}
         <button
@@ -243,6 +535,7 @@ export function MotionPreview({
           className="btn-monitor-fullscreen"
           onClick={toggleFullscreen}
           title={isFullscreen ? "Sair da Tela Cheia" : "Modo Tela Cheia (F)"}
+          style={{ zIndex: 70 }}
         >
           {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
@@ -259,6 +552,17 @@ export function MotionPreview({
           >
             <Play size={15} />
             <span>Replay Animação</span>
+          </button>
+
+          <button
+            type="button"
+            className={`btn ${isPaused ? "btn-warning" : "btn-secondary"} pause-action-btn`}
+            onClick={() => setIsPaused((p) => !p)}
+            title={isPaused ? "Continuar reprodução da TV" : "Pausar tela para editar"}
+            style={{ fontWeight: 600 }}
+          >
+            {isPaused ? <Play size={15} /> : <Pause size={15} />}
+            <span>{isPaused ? "Continuar TV" : "Pausar TV"}</span>
           </button>
 
           <div className="speed-selector-group">

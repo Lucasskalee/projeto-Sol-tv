@@ -10,7 +10,19 @@ import {
   Pencil,
   Plus,
   Trash2,
+  Tv as TvIcon,
+  Upload,
 } from "lucide-react";
+import {
+  createNewProgram,
+  duplicateProgram,
+  loadStoredPrograms,
+  saveStoredPrograms,
+  type TvProgram,
+} from "../offers/programs";
+import { ProgramList } from "../components/admin/programs/ProgramList";
+import { ProgramEditor } from "../components/admin/programs/ProgramEditor";
+import { ProgramTesterModal } from "../components/admin/programs/ProgramTesterModal";
 import {
   demoContent,
   contentFromData,
@@ -31,6 +43,7 @@ import {
   signOut,
   subscribeToTvContent,
   updateCompositionsOrder,
+  uploadMediaFile,
   upsertComposition,
   upsertMedia,
   upsertOffer,
@@ -41,6 +54,7 @@ import type { OfferComposition } from "../offers/compositions";
 import { TvPlayer } from "../components/TvPlayer";
 import { ProductImage } from "../components/OfferSlide";
 import { MediaManager } from "../components/MediaManager";
+import { RemoveImageBackground } from "../components/RemoveImageBackground";
 import { CompositionManager } from "../components/admin/compositions/CompositionManager";
 import { normalTheme } from "../themes/normal";
 import { blackFridayTheme } from "../themes/blackFriday";
@@ -57,6 +71,8 @@ const priceValue = (value: string) =>
   );
 
 const validUrl = (value: string) => {
+  if (!value) return false;
+  if (value.startsWith("data:image/") || value.startsWith("blob:") || value.startsWith("/")) return true;
   try {
     return ["https:", "http:"].includes(new URL(value).protocol);
   } catch {
@@ -67,7 +83,7 @@ const validUrl = (value: string) => {
 export default function Admin() {
   const navigate = useNavigate();
   const [sector, setSector] = useState("acougue");
-  const [activeTab, setActiveTab] = useState<"offers" | "media">("offers");
+  const [activeTab, setActiveTab] = useState<"programs" | "offers" | "media">("programs");
   const [showOfferForm, setShowOfferForm] = useState(false);
   const [tvThemeSlug, setTvThemeSlug] = useState<"normal" | "black-friday">(() =>
     (getSectorThemeSlug(sector) as "normal" | "black-friday") || "normal",
@@ -77,6 +93,12 @@ export default function Admin() {
   );
 
   const [content, setContent] = useState<TvContent>(() => cachedContent(sector));
+  const [programs, setPrograms] = useState<TvProgram[]>(() =>
+    loadStoredPrograms(sector, cachedContent(sector).offers, cachedContent(sector).media),
+  );
+  const [editingProgram, setEditingProgram] = useState<TvProgram | null>(null);
+  const [testingProgram, setTestingProgram] = useState<TvProgram | null>(null);
+
   const [connection, setConnection] = useState<"online" | "syncing" | "offline">(
     databaseConfigured ? "syncing" : "offline",
   );
@@ -86,8 +108,102 @@ export default function Admin() {
   const [error, setError] = useState("");
   const [resetting, setResetting] = useState(false);
   const [productSearch, setProductSearch] = useState("");
+  const [uploadingOfferImage, setUploadingOfferImage] = useState(false);
+  const offerFileInputRef = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const editing = content.offers.some((o) => o.id === draft.id);
+
+  function handleNewProgram() {
+    const fresh = createNewProgram(sector, "Loja 03");
+    setEditingProgram(fresh);
+  }
+
+  function handleEditProgram(prog: TvProgram) {
+    setEditingProgram(prog);
+  }
+
+  function handleDuplicateProgram(prog: TvProgram) {
+    const clone = duplicateProgram(prog);
+    const next = [...programs, clone];
+    setPrograms(next);
+    saveStoredPrograms(sector, next);
+    setNotice(`Programação "${clone.name}" duplicada como rascunho.`);
+  }
+
+  function handleDeleteProgram(id: string) {
+    if (!window.confirm("Deseja realmente excluir esta programação?")) return;
+    const next = programs.filter((p) => p.id !== id);
+    setPrograms(next);
+    saveStoredPrograms(sector, next);
+    setNotice("Programação excluída com sucesso.");
+  }
+
+  function handleSaveProgram(saved: TvProgram) {
+    const exists = programs.some((p) => p.id === saved.id);
+    const next = exists
+      ? programs.map((p) => (p.id === saved.id ? saved : p))
+      : [...programs, saved];
+    setPrograms(next);
+    saveStoredPrograms(sector, next);
+    setEditingProgram(null);
+    setNotice(`Programação "${saved.name}" salva com sucesso!`);
+  }
+
+  function handleTestProgram(prog: TvProgram) {
+    setTestingProgram(prog);
+  }
+
+  async function handleOfferFileUpload(file: File) {
+    const isImage =
+      file.type.startsWith("image/") ||
+      /\.(jpg|jpeg|png|webp|svg)$/i.test(file.name);
+
+    if (!isImage) {
+      setError("Selecione um arquivo de imagem válido (.png, .jpg, .webp, .svg).");
+      return;
+    }
+
+    const maxBytes = 15 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setError("A imagem deve ter no máximo 15MB.");
+      return;
+    }
+
+    setUploadingOfferImage(true);
+    setError("");
+
+    try {
+      if (databaseConfigured) {
+        const result = await uploadMediaFile(file, sector);
+        field("image", result.publicUrl);
+        setNotice(`Imagem "${file.name}" enviada com sucesso!`);
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === "string") {
+            field("image", reader.result);
+            setNotice(`Imagem "${file.name}" carregada localmente!`);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err: unknown) {
+      console.error("Erro no upload da imagem da oferta:", err);
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          field("image", reader.result);
+          setNotice(`Imagem "${file.name}" carregada como arquivo.`);
+        }
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      setUploadingOfferImage(false);
+      if (offerFileInputRef.current) {
+        offerFileInputRef.current.value = "";
+      }
+    }
+  }
 
   async function handleLogout() {
     try {
@@ -120,8 +236,10 @@ export default function Admin() {
   }
 
   useEffect(() => {
-    setContent(cachedContent(sector));
+    const fresh = cachedContent(sector);
+    setContent(fresh);
     setDraft(newOffer(sector));
+    setPrograms(loadStoredPrograms(sector, fresh.offers, fresh.media));
     setTvThemeSlug(
       (getSectorThemeSlug(sector) as "normal" | "black-friday") || "normal",
     );
@@ -392,12 +510,22 @@ export default function Admin() {
       (offer) => !offers.some((nextOffer) => nextOffer.id === offer.id),
     );
 
+    const offersMap = new Map(offers.map((o) => [o.id, o]));
+    const updatedComps = content.compositions.map((comp) => ({
+      ...comp,
+      offers: Object.freeze(
+        comp.offers
+          .map((o) => offersMap.get(o.id) || o)
+          .filter((o): o is Offer => !removed.some((rem) => rem.id === o.id)),
+      ),
+    }));
+
     setContent(
       contentFromData({
         sector,
         offers,
         media: content.media,
-        compositions: content.compositions,
+        compositions: updatedComps,
       }),
     );
     setConnection("syncing");
@@ -490,6 +618,10 @@ export default function Admin() {
       regularPrice: regular?.toFixed(2).replace(".", ","),
       duration: safeDuration,
       layout: draft.layout || "single",
+      imageScale:
+        typeof draft.imageScale === "number" && draft.imageScale > 0
+          ? draft.imageScale
+          : 1,
     };
 
     const nextOffers = editing
@@ -571,7 +703,14 @@ export default function Admin() {
         </div>
 
         {/* Admin Navigation Tabs */}
-        <div className="admin-tabs admin-tabs-2">
+        <div className="admin-tabs admin-tabs-3" style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: "6px" }}>
+          <button
+            type="button"
+            className={`admin-tab-btn ${activeTab === "programs" ? "active" : ""}`}
+            onClick={() => setActiveTab("programs")}
+          >
+            <TvIcon size={14} /> Programações ({programs.length})
+          </button>
           <button
             type="button"
             className={`admin-tab-btn ${activeTab === "offers" ? "active" : ""}`}
@@ -587,6 +726,20 @@ export default function Admin() {
             <Film size={14} /> Mídias ({content.media.length})
           </button>
         </div>
+
+        {/* Programações Tab (Visão Geral de Grades e Pastas de Ofertas) */}
+        {activeTab === "programs" && (
+          <ProgramList
+            programs={programs}
+            currentSector={sector}
+            sectorLabel={currentSectorLabel}
+            onNewProgram={handleNewProgram}
+            onEditProgram={handleEditProgram}
+            onDuplicateProgram={handleDuplicateProgram}
+            onTestProgram={handleTestProgram}
+            onDeleteProgram={handleDeleteProgram}
+          />
+        )}
 
         {/* Ofertas Tab (Camadas da TV + Catálogo de Ofertas) */}
         {activeTab === "offers" && (
@@ -694,15 +847,246 @@ export default function Admin() {
                       </select>
                     </div>
                   </div>
-                  <label htmlFor="image">Imagem da oferta (URL)</label>
-                  <input
-                    id="image"
-                    type="url"
-                    required
-                    value={draft.image}
-                    onChange={(e) => field("image", e.target.value)}
-                    placeholder="Cole uma URL de imagem"
-                  />
+                  <label htmlFor="image">Imagem da oferta (Upload de arquivo ou URL)</label>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
+                    <input
+                      id="image"
+                      type="text"
+                      required
+                      value={draft.image}
+                      onChange={(e) => field("image", e.target.value)}
+                      placeholder="Cole uma URL ou selecione um arquivo do computador..."
+                      style={{ flex: 1 }}
+                    />
+                    <input
+                      type="file"
+                      ref={offerFileInputRef}
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleOfferFileUpload(file);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{
+                        whiteSpace: "nowrap",
+                        padding: "10px 14px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        cursor: "pointer",
+                        background: "#25292f",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                      }}
+                      onClick={() => offerFileInputRef.current?.click()}
+                      disabled={uploadingOfferImage}
+                    >
+                      <Upload size={14} />
+                      {uploadingOfferImage ? "Enviando..." : "📁 Escolher arquivo"}
+                    </button>
+                  </div>
+
+                  {draft.image && (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        padding: "8px 12px",
+                        background: "rgba(255, 255, 255, 0.03)",
+                        borderRadius: "6px",
+                        marginBottom: "12px",
+                        border: "1px solid rgba(255, 255, 255, 0.06)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "48px",
+                          height: "48px",
+                          borderRadius: "4px",
+                          background: "rgba(0, 0, 0, 0.3)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <img
+                          src={draft.image}
+                          alt="Prévia da oferta"
+                          style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLElement).style.display = "none";
+                          }}
+                        />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: "12px", color: "#3ddc97", fontWeight: 700, display: "block" }}>
+                          ✓ Imagem carregada
+                        </span>
+                        <small style={{ fontSize: "11px", color: "#9da5b0", overflow: "hidden", textOverflow: "ellipsis", display: "block", whiteSpace: "nowrap" }}>
+                          {draft.image.startsWith("data:") ? "Arquivo local (Base64)" : draft.image}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary mini"
+                        style={{ padding: "4px 8px", fontSize: "11px" }}
+                        onClick={() => field("image", "")}
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  )}
+
+                  {draft.image && <RemoveImageBackground key={draft.image} source={draft.image} disabled={uploadingOfferImage} onApply={handleOfferFileUpload} />}
+                  {/* Controle Opcional de Tamanho / Zoom da Imagem */}
+                  <div
+                    style={{
+                      marginTop: "10px",
+                      marginBottom: "14px",
+                      padding: "12px",
+                      background: "rgba(255, 255, 255, 0.04)",
+                      borderRadius: "8px",
+                      border: "1px solid rgba(255, 255, 255, 0.08)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      <label
+                        htmlFor="imageScale"
+                        style={{
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          color: "#f1f1f1",
+                          margin: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                        }}
+                      >
+                        <span>🔍 Ajuste de Tamanho da Imagem</span>
+                        <span style={{ fontSize: "11px", color: "#9da5b0", fontWeight: 400 }}>
+                          (Opcional)
+                        </span>
+                      </label>
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          fontWeight: 800,
+                          color: "#f2c94c",
+                          background: "rgba(242, 201, 76, 0.12)",
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        {Math.round((draft.imageScale || 1) * 100)}%
+                      </span>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <input
+                        id="imageScale"
+                        type="range"
+                        min="0.8"
+                        max="2.5"
+                        step="0.05"
+                        value={draft.imageScale || 1}
+                        onChange={(e) => field("imageScale", parseFloat(e.target.value))}
+                        style={{ flex: 1, accentColor: "#f2c94c", cursor: "pointer" }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
+                      {[
+                        { label: "100% (Padrão)", value: 1 },
+                        { label: "+20%", value: 1.2 },
+                        { label: "+40%", value: 1.4 },
+                        { label: "+60%", value: 1.6 },
+                        { label: "+80%", value: 1.8 },
+                        { label: "Dobro (200%)", value: 2 },
+                        { label: "+140% (2.4x)", value: 2.4 },
+                      ].map((preset) => {
+                        const isCurrent = Math.abs((draft.imageScale || 1) - preset.value) < 0.02;
+                        return (
+                          <button
+                            key={preset.value}
+                            type="button"
+                            className={`btn btn-secondary ${isCurrent ? "active" : ""}`}
+                            style={{
+                              padding: "4px 8px",
+                              fontSize: "11px",
+                              borderRadius: "4px",
+                              background: isCurrent ? "#f2c94c" : "rgba(255, 255, 255, 0.08)",
+                              color: isCurrent ? "#111111" : "#ffffff",
+                              border: "none",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                            }}
+                            onClick={() => field("imageScale", preset.value)}
+                          >
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {draft.image && (
+                      <div
+                        style={{
+                          marginTop: "10px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "12px",
+                          padding: "8px 10px",
+                          background: "#0d0f13",
+                          borderRadius: "6px",
+                          border: "1px solid rgba(255, 255, 255, 0.06)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "64px",
+                            height: "64px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            overflow: "hidden",
+                            background: "rgba(255, 255, 255, 0.02)",
+                            borderRadius: "4px",
+                            border: "1px dashed rgba(255, 255, 255, 0.15)",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <img
+                            src={draft.image}
+                            alt="Prévia do tamanho"
+                            style={{
+                              maxWidth: "100%",
+                              maxHeight: "100%",
+                              objectFit: "contain",
+                              transform: `scale(${draft.imageScale || 1})`,
+                              transformOrigin: "center center",
+                              transition: "transform 0.15s ease-out",
+                            }}
+                          />
+                        </div>
+                        <small style={{ color: "#9da5b0", fontSize: "11px", lineHeight: 1.35 }}>
+                          Útil para imagens estreitas (ex: linguiça, garrafas) ou fotos recortadas sem fundo que precisam de mais destaque na TV.
+                        </small>
+                      </div>
+                    )}
+                  </div>
+
                   <details>
                     <summary>Agendamento e vídeo da oferta</summary>
                     <div className="row">
@@ -926,6 +1310,13 @@ export default function Admin() {
               ? `Última sincronização: ${lastSync.toLocaleTimeString("pt-BR")}`
               : "Aguardando sincronização"}
           </small>
+          <Link
+            to="/studio/motion"
+            className="btn btn-primary"
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontWeight: 700 }}
+          >
+            <span>🎨 Editor Visual (Motion Lab) ↗</span>
+          </Link>
           <a
             href={`/tv/${sector}`}
             target="_blank"
@@ -995,17 +1386,17 @@ export default function Admin() {
           </div>
         </section>
 
-        {/* Skalee Motion Studio Highlighted Card */}
+        {/* Sol TV Motion Studio Highlighted Card */}
         <section className="card admin-motion-studio-card">
           <div className="studio-card-content">
-            <div className="studio-card-icon">🎬</div>
+            <div className="studio-card-icon">⚡</div>
             <div className="studio-card-body">
-              <h2>Skalee Motion Studio</h2>
-              <p>Crie, teste e salve a identidade visual das TVs.</p>
+              <h2>Sol TV Motion Lab & Editor Visual 16:9</h2>
+              <p>Edite livremente em 16:9, arraste a logo, configure cores de fundo, física de preços e publique instantaneamente na TV via Realtime.</p>
             </div>
           </div>
           <Link to="/studio/motion" className="btn btn-primary studio-launch-btn">
-            Abrir Motion Studio ↗
+            Abrir Motion Lab ↗
           </Link>
         </section>
 
@@ -1019,6 +1410,26 @@ export default function Admin() {
           </div>
         </div>
       </main>
+
+      {/* Program Editor Modal */}
+      {editingProgram && (
+        <ProgramEditor
+          initialProgram={editingProgram}
+          availableOffers={content.offers}
+          availableMedia={content.media}
+          onSave={handleSaveProgram}
+          onCancel={() => setEditingProgram(null)}
+          onTest={handleTestProgram}
+        />
+      )}
+
+      {/* Program Tester Modal */}
+      {testingProgram && (
+        <ProgramTesterModal
+          program={testingProgram}
+          onClose={() => setTestingProgram(null)}
+        />
+      )}
 
       {notice && (
         <div className="toast" role="status">

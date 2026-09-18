@@ -11,6 +11,8 @@ import {
   loadActiveMotionConfig,
   saveActiveMotionConfig,
   subscribeToActiveMotionConfig,
+  sanitizeMotionConfigForStorage,
+  safeLocalStorageSetItem,
 } from "./storage";
 import { DEFAULT_PRESETS } from "./presets";
 import { areConfigsEqual, cloneMotionConfig, DEFAULT_MOTION_CONFIG } from "./defaults";
@@ -236,5 +238,73 @@ describe("Motion Storage & Defaults", () => {
     expect(normalized.background.type).toBe("solid");
     expect(normalized.productCard).toBeDefined();
     expect(normalized.productCard.style).toBe("transparent");
+  });
+
+  it("clones and detects differences in layoutTuning properly", () => {
+    const configA = cloneMotionConfig(DEFAULT_MOTION_CONFIG);
+    configA.layoutTuning = {
+      grid4: {
+        productImage: { scale: 1.45, x: 10, y: -5 },
+        productName: { fontSizeOffset: 12, x: 0, y: 4 },
+        promotionalPrice: { fontSizeOffset: 24, x: 0, y: 0 },
+      },
+    };
+
+    const cloned = cloneMotionConfig(configA);
+    expect(cloned.layoutTuning?.grid4?.productImage?.scale).toBe(1.45);
+    expect(cloned.layoutTuning?.grid4?.productName?.fontSizeOffset).toBe(12);
+    expect(areConfigsEqual(configA, cloned)).toBe(true);
+
+    const modified = cloneMotionConfig(configA);
+    modified.layoutTuning!.grid4!.productImage!.scale = 1.6;
+    expect(areConfigsEqual(configA, modified)).toBe(false);
+  });
+
+  it("sanitizes base64 and blob data URLs when preparing config for storage", () => {
+    const configWithBase64: MotionConfig = {
+      ...DEFAULT_MOTION_CONFIG,
+      logo: {
+        ...DEFAULT_MOTION_CONFIG.logo,
+        image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      },
+      blackFridayImage: {
+        visible: true,
+        src: "blob:https://sol-tv-five.vercel.app/test-uuid",
+        originalSrc: "data:image/jpeg;base64,largeblobdata...",
+        x: 50,
+        y: 50,
+        scale: 1,
+        opacity: 100,
+        rotation: 0,
+        removeBackground: false,
+        animation: { preset: "none" },
+        zIndex: 20,
+      },
+      badge: {
+        ...DEFAULT_MOTION_CONFIG.badge,
+        image: "https://supabase.co/storage/v1/object/public/tv-media/acougue/badge.png",
+      },
+    };
+
+    const sanitized = sanitizeMotionConfigForStorage(configWithBase64);
+    expect(sanitized.logo.image).toBe("");
+    expect(sanitized.blackFridayImage?.src).toBe("");
+    expect(sanitized.blackFridayImage?.originalSrc).toBe("");
+    // Remote HTTPS URLs are preserved
+    expect(sanitized.badge.image).toBe("https://supabase.co/storage/v1/object/public/tv-media/acougue/badge.png");
+  });
+
+  it("handles QuotaExceededError gracefully in safeLocalStorageSetItem", () => {
+    const originalSetItem = localStorageMock.setItem;
+    localStorageMock.setItem = () => {
+      const err = new Error("QuotaExceededError: Setting the value exceeded the quota.");
+      err.name = "QuotaExceededError";
+      throw err;
+    };
+
+    const result = safeLocalStorageSetItem("test-key", "test-value");
+    expect(result).toBe(false);
+
+    localStorageMock.setItem = originalSetItem;
   });
 });

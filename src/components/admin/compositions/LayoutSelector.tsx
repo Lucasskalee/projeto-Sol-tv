@@ -32,6 +32,13 @@ const LAYOUT_OPTIONS: Array<{
     icon: "⚏",
   },
   {
+    id: "trio",
+    title: "TRIO",
+    subtitle: "3 produtos",
+    badge: "3 produtos",
+    icon: "☰",
+  },
+  {
     id: "grid4",
     title: "GRADE 4",
     subtitle: "4 produtos",

@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { TvPlayer } from "../components/TvPlayer";
 import { contentFromData, seedOffers } from "../data";
+import { cachedContent, databaseConfigured, loadTvContent, subscribeToTvContent } from "../supabase";
 import { OFFER_LAYOUTS, type OfferLayout } from "../offers/layouts";
 import { resolveTheme } from "../themes/resolveTheme";
 import { themeRegistry } from "../themes/registry";
-import type { Offer } from "../types";
+import type { Offer, TvContent } from "../types";
 
 const LAB_PRODUCT_OFFERS = [
   {
@@ -91,7 +92,7 @@ function createLabOffers(): Offer[] {
   });
 }
 
-const labContent = contentFromData({
+const defaultLabContent = contentFromData({
   sector: "acougue",
   offers: createLabOffers(),
   media: [],
@@ -100,6 +101,26 @@ const labContent = contentFromData({
 const AVAILABLE_THEMES = Object.values(themeRegistry);
 
 export default function MotionLab() {
+  const [realContent, setRealContent] = useState<TvContent>(() => cachedContent("acougue"));
+
+  useEffect(() => {
+    if (!databaseConfigured) return;
+    loadTvContent("acougue", true)
+      .then((data) => setRealContent(data))
+      .catch(() => {});
+
+    const unsubscribe = subscribeToTvContent(
+      "acougue",
+      (data) => setRealContent(data),
+      () => {},
+      true
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const effectiveContent = useMemo(() => {
+    return realContent;
+  }, [realContent]);
   // Timeline & Playback State
   const [themeSlug, setThemeSlug] = useState<string>("black-friday");
   const [layout, setLayout] = useState<OfferLayout>("hero");
@@ -830,7 +851,7 @@ export default function MotionLab() {
             key={`lab-player-key-${replayKey}`}
           >
             <TvPlayer
-              content={labContent}
+              content={effectiveContent}
               mode="preview"
               connection="online"
               sectorLabel={sectorText}

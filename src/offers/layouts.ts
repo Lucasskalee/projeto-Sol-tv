@@ -1,11 +1,11 @@
-export type OfferLayout = "hero" | "duo" | "grid4" | "grid8";
+export type OfferLayout = "hero" | "duo" | "trio" | "grid4" | "grid8";
 
 export type LegacyOfferLayout = "single" | "pair" | "grid";
 
 export type OfferLayoutDefinition = {
   readonly id: OfferLayout;
   readonly label: string;
-  readonly productCount: 1 | 2 | 4 | 8;
+  readonly productCount: 1 | 2 | 3 | 4 | 8;
   readonly density: "spacious" | "comfortable" | "compact" | "dense";
 };
 
@@ -21,6 +21,12 @@ export const OFFER_LAYOUTS: Readonly<Record<OfferLayout, OfferLayoutDefinition>>
       id: "duo",
       label: "2 produtos",
       productCount: 2,
+      density: "comfortable",
+    }),
+    trio: Object.freeze({
+      id: "trio",
+      label: "3 produtos",
+      productCount: 3,
       density: "comfortable",
     }),
     grid4: Object.freeze({

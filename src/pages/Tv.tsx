@@ -6,6 +6,9 @@ import {
   loadSectorTheme,
   loadTvContent,
   subscribeToTvContent,
+  loadVisualConfig,
+  subscribeToVisualConfig,
+  loadCachedVisualConfig,
 } from "../supabase";
 import type { TvContent } from "../types";
 import { TvPlayer } from "../components/TvPlayer";
@@ -28,9 +31,10 @@ export default function Tv() {
   const [theme, setTheme] = useState<ThemeDefinition>(() =>
     resolveTheme(queryTheme || getSectorThemeSlug(activeSector)),
   );
-  const [motionConfig, setMotionConfig] = useState<MotionConfig>(() =>
-    loadActiveMotionConfig(),
-  );
+  const [motionConfig, setMotionConfig] = useState<MotionConfig>(() => {
+    const cachedVisual = loadCachedVisualConfig(activeSector);
+    return cachedVisual.publishedConfig || loadActiveMotionConfig();
+  });
   const [connection, setConnection] = useState<"online" | "syncing" | "offline">(
     databaseConfigured ? "syncing" : "offline",
   );
@@ -38,30 +42,68 @@ export default function Tv() {
 
   useEffect(() => {
     setContent(cachedContent(activeSector));
-    setTheme(resolveTheme(queryTheme || getSectorThemeSlug(activeSector)));
+    
+    // 1. Initial cached config loading
+    const cachedVisual = loadCachedVisualConfig(activeSector);
+    if (cachedVisual.publishedConfig) {
+      setMotionConfig(cachedVisual.publishedConfig);
+      if (!queryTheme && cachedVisual.publishedConfig.themeSlug) {
+        setTheme(resolveTheme(cachedVisual.publishedConfig.themeSlug));
+      }
+    } else {
+      setTheme(resolveTheme(queryTheme || getSectorThemeSlug(activeSector)));
+    }
 
-    // Se houver override por query param, respeita o query param
-    if (queryTheme) return;
-
+    // 2. Realtime Theme subscription
     const unsubscribeTheme = subscribeToSectorTheme(activeSector, (newTheme) => {
-      setTheme(newTheme);
+      if (!queryTheme) setTheme(newTheme);
     });
 
     void loadSectorTheme(activeSector).then((slug) => {
-      setTheme(resolveTheme(slug));
+      if (!queryTheme) setTheme(resolveTheme(slug));
     });
 
+    // 3. Fallback Local Motion storage subscription (for local dev)
     const unsubscribeMotion = subscribeToActiveMotionConfig((newConfig) => {
       setMotionConfig(newConfig);
     });
+
+    // 4. Supabase Realtime Visual Config subscription (sol_tv_visual_configs)
+    let unsubscribeVisual: () => void = () => {};
+    if (databaseConfigured) {
+      loadVisualConfig(activeSector)
+        .then((data) => {
+          if (data.publishedConfig) {
+            setMotionConfig(data.publishedConfig);
+            if (!queryTheme && data.publishedConfig.themeSlug) {
+              setTheme(resolveTheme(data.publishedConfig.themeSlug));
+            }
+          }
+        })
+        .catch((err) => {
+          console.error("[TV Visual] Erro ao carregar configuração visual:", err);
+        });
+
+      unsubscribeVisual = subscribeToVisualConfig(activeSector, (data) => {
+        if (data.publishedConfig) {
+          console.log(`[TV Visual Realtime] Atualização recebida para setor ${activeSector} (v${data.publishedVersion})`);
+          setMotionConfig(data.publishedConfig);
+          if (!queryTheme && data.publishedConfig.themeSlug) {
+            setTheme(resolveTheme(data.publishedConfig.themeSlug));
+          }
+        }
+      });
+    }
 
     if (!databaseConfigured) {
       return () => {
         unsubscribeTheme();
         unsubscribeMotion();
+        unsubscribeVisual();
       };
     }
 
+    // 5. TV Content loading & subscription
     loadTvContent(activeSector, true)
       .then((data) => {
         setContent(data);
@@ -87,6 +129,7 @@ export default function Tv() {
       unsubscribeTheme();
       unsubscribeContent();
       unsubscribeMotion();
+      unsubscribeVisual();
     };
   }, [activeSector, queryTheme]);
 

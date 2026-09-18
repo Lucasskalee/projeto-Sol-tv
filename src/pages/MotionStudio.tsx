@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { MotionToolbar } from "../components/motion/MotionToolbar";
 import { MotionControls } from "../components/motion/MotionControls";
 import { MotionPreview } from "../components/motion/MotionPreview";
@@ -17,29 +17,48 @@ import {
 import { DEFAULT_PRESETS } from "../motion/presets";
 import { DEFAULT_MOTION_CONFIG, areConfigsEqual, cloneMotionConfig } from "../motion/defaults";
 import type { MotionConfig, MotionPreset } from "../motion/types";
+import {
+  loadVisualConfig,
+  saveDraftVisualConfig,
+  publishVisualConfig,
+  loadCachedVisualConfig,
+  databaseConfigured,
+} from "../supabase";
+import { SECTORS } from "../data";
 
 export default function MotionStudio() {
-  // 1. Presets State
+  // 1. Active Sector State
+  const [sector, setSector] = useState<string>("acougue");
+
+  // 2. Presets State
   const [presets, setPresets] = useState<MotionPreset[]>(() => loadPresets());
   const [activePresetId, setActivePresetId] = useState<string>(() => loadActivePresetId());
 
-  // 2. Active Preset & Config State
   const activePreset = useMemo(() => {
     return presets.find((p) => p.id === activePresetId) || presets[0] || DEFAULT_PRESETS[0];
   }, [presets, activePresetId]);
 
+  // 3. Draft & Published Config State
   const [currentConfig, setCurrentConfig] = useState<MotionConfig>(() => {
-    return loadActiveMotionConfig();
+    const cached = loadCachedVisualConfig("acougue");
+    return cached.draftConfig || loadActiveMotionConfig();
   });
 
   const [savedConfig, setSavedConfig] = useState<MotionConfig>(() => {
-    const activeId = loadActivePresetId();
-    const allPresets = loadPresets();
-    const target = allPresets.find((p) => p.id === activeId) || allPresets[0];
-    return cloneMotionConfig(target?.config || DEFAULT_MOTION_CONFIG);
+    const cached = loadCachedVisualConfig("acougue");
+    return cached.publishedConfig || cloneMotionConfig(DEFAULT_MOTION_CONFIG);
   });
 
-  // 3. UI Status State
+  const [publishedVersion, setPublishedVersion] = useState<number>(1);
+  const [publishedAt, setPublishedAt] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState<boolean>(false);
+
+  // 4. Panels & View Modes
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(true);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState<boolean>(true);
+  const [isCleanView, setIsCleanView] = useState<boolean>(false);
+
+  // 5. UI Playback & Toast State
   const [replayKey, setReplayKey] = useState<number>(0);
   const [copied, setCopied] = useState<boolean>(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "info" | "error" } | null>(
@@ -51,37 +70,129 @@ export default function MotionStudio() {
       setToast({ message, type });
       setTimeout(() => {
         setToast((current) => (current?.message === message ? null : current));
-      }, 3200);
+      }, 3400);
     },
     []
   );
 
-  // Dirty check: True if currentConfig differs from saved snapshot
+  // Load Sector Config from Supabase / Cache when sector changes
+  useEffect(() => {
+    const cached = loadCachedVisualConfig(sector);
+    if (cached) {
+      if (cached.draftConfig) setCurrentConfig(cloneMotionConfig(cached.draftConfig));
+      if (cached.publishedConfig) setSavedConfig(cloneMotionConfig(cached.publishedConfig));
+      if (cached.publishedVersion) setPublishedVersion(cached.publishedVersion);
+      if (cached.publishedAt) setPublishedAt(cached.publishedAt);
+    }
+
+    if (!databaseConfigured) return;
+
+    loadVisualConfig(sector)
+      .then((data) => {
+        if (data.draftConfig) setCurrentConfig(cloneMotionConfig(data.draftConfig));
+        if (data.publishedConfig) setSavedConfig(cloneMotionConfig(data.publishedConfig));
+        setPublishedVersion(data.publishedVersion || 1);
+        setPublishedAt(data.publishedAt || null);
+      })
+      .catch((err) => {
+        console.error("[MotionStudio] Erro ao carregar configuração visual:", err);
+      });
+  }, [sector]);
+
+  // Dirty check: True if currentConfig differs from published savedConfig
   const isDirty = useMemo(() => {
     return !areConfigsEqual(currentConfig, savedConfig);
   }, [currentConfig, savedConfig]);
+
+  // Keyboard shortcut 'H' for Clean View Mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT"
+      ) {
+        return;
+      }
+
+      if (e.key === "h" || e.key === "H") {
+        e.preventDefault();
+        setIsCleanView((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Handler: Replay animation
   const handleReplay = useCallback(() => {
     setReplayKey((k) => k + 1);
   }, []);
 
-  // Handler: Change config
+  // Auto-save draft to Supabase & localStorage (Debounced 1000ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      saveActiveMotionConfig(currentConfig);
+      if (databaseConfigured) {
+        void saveDraftVisualConfig(sector, currentConfig);
+      }
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [currentConfig, sector]);
+
+  // Handler: Change config (pure state updater, auto-saved via debounced effect)
   const handleConfigChange = (updater: (prev: MotionConfig) => MotionConfig) => {
+    setCurrentConfig(updater);
+  };
+
+  // Handler: Layout change
+  const handleLayoutChange = (layout: import("../offers/layouts").OfferLayout) => {
+    setCurrentConfig((prev) => ({ ...prev, layout }));
+    handleReplay();
+  };
+
+  // Handler: Layout tuning update
+  const handleUpdateLayoutTuning = (
+    layout: import("../offers/layouts").OfferLayout,
+    updater: (prev: import("../motion/types").PerLayoutTuning) => import("../motion/types").PerLayoutTuning
+  ) => {
     setCurrentConfig((prev) => {
-      const next = updater(prev);
-      saveActiveMotionConfig(next);
-      return next;
+      const currentTunings = prev.layoutTuning || {};
+      const currentLayoutTuning = currentTunings[layout] || {};
+      const nextLayoutTuning = updater(currentLayoutTuning);
+      return {
+        ...prev,
+        layoutTuning: {
+          ...currentTunings,
+          [layout]: nextLayoutTuning,
+        },
+      };
     });
+  };
+
+  // Handler: Reset layout tuning
+  const handleResetLayoutTuning = (layout: import("../offers/layouts").OfferLayout) => {
+    setCurrentConfig((prev) => {
+      const currentTunings = { ...(prev.layoutTuning || {}) };
+      delete currentTunings[layout];
+      return {
+        ...prev,
+        layoutTuning: currentTunings,
+      };
+    });
+    showToast(`Ajustes visuais do layout "${layout.toUpperCase()}" restaurados para o padrão.`, "info");
+  };
+
+  // Handler: Save layout to TV
+  const handleSaveLayoutToTv = () => {
+    handlePublishToTv();
   };
 
   // Handler: Speed change
   const handleSpeedChange = (speed: number) => {
-    setCurrentConfig((prev) => {
-      const next = { ...prev, speed };
-      saveActiveMotionConfig(next);
-      return next;
-    });
+    setCurrentConfig((prev) => ({ ...prev, speed }));
   };
 
   // Handler: Apply a preset from panel
@@ -91,14 +202,14 @@ export default function MotionStudio() {
 
     const cloned = cloneMotionConfig(preset.config);
     setCurrentConfig(cloned);
-    setSavedConfig(cloned);
     saveActiveMotionConfig(cloned);
+    void saveDraftVisualConfig(sector, cloned);
 
     handleReplay();
-    showToast(`Preset "${preset.name}" aplicado e ativado nas TVs!`, "success");
+    showToast(`Preset "${preset.name}" aplicado como rascunho! Clique em "Publicar na TV" para enviar para as telas.`, "info");
   };
 
-  // Handler: Save current preset
+  // Handler: Save current preset to local library
   const handleSavePreset = () => {
     const updatedPreset: MotionPreset = {
       ...activePreset,
@@ -110,15 +221,35 @@ export default function MotionStudio() {
     setPresets(updated);
     setActivePresetId(updatedPreset.id);
     saveActivePresetId(updatedPreset.id);
-    setSavedConfig(cloneMotionConfig(currentConfig));
     saveActiveMotionConfig(currentConfig);
 
-    showToast(`Preset "${updatedPreset.name}" salvo e publicado nas TVs!`, "success");
+    showToast(`Preset "${updatedPreset.name}" salvo na biblioteca local.`, "success");
   };
 
-  // Handler: Explicit publish to TV
-  const handlePublishToTv = () => {
-    handleSavePreset();
+  // Handler: Explicit publish to TV via Supabase Realtime
+  const handlePublishToTv = async () => {
+    setIsPublishing(true);
+    try {
+      const published = await publishVisualConfig(sector, currentConfig);
+      setSavedConfig(cloneMotionConfig(currentConfig));
+      setPublishedVersion(published.publishedVersion);
+      setPublishedAt(published.publishedAt);
+      saveActiveMotionConfig(currentConfig);
+
+      const sectorLabel = SECTORS.find((s) => s.id === sector)?.label || sector.toUpperCase();
+      showToast(
+        `✓ Identidade visual (v${published.publishedVersion}) publicada com sucesso na TV do setor ${sectorLabel}!`,
+        "success"
+      );
+    } catch (err: any) {
+      console.error("[MotionStudio] Erro ao publicar visual na TV:", err);
+      showToast(
+        err?.message || "Erro ao publicar na TV. Verifique a conexão com o Supabase.",
+        "error"
+      );
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   // Handler: Save as brand new preset
@@ -137,10 +268,9 @@ export default function MotionStudio() {
     setPresets(updated);
     setActivePresetId(newPreset.id);
     saveActivePresetId(newPreset.id);
-    setSavedConfig(cloneMotionConfig(currentConfig));
     saveActiveMotionConfig(currentConfig);
 
-    showToast(`Novo preset "${name}" criado, salvo e ativado nas TVs!`, "success");
+    showToast(`Novo preset "${name}" salvo na biblioteca local!`, "success");
   };
 
   // Handler: Duplicate preset from toolbar or card
@@ -150,10 +280,10 @@ export default function MotionStudio() {
     setActivePresetId(newPreset.id);
     saveActivePresetId(newPreset.id);
     setCurrentConfig(cloneMotionConfig(newPreset.config));
-    setSavedConfig(cloneMotionConfig(newPreset.config));
     saveActiveMotionConfig(newPreset.config);
+    void saveDraftVisualConfig(sector, newPreset.config);
 
-    showToast(`Preset "${newPreset.name}" duplicado e ativado!`, "success");
+    showToast(`Preset "${newPreset.name}" duplicado e ativado no rascunho!`, "info");
   };
 
   const handleDuplicatePresetById = (id: string) => {
@@ -191,7 +321,6 @@ export default function MotionStudio() {
       setActivePresetId(fallback.id);
       saveActivePresetId(fallback.id);
       setCurrentConfig(cloneMotionConfig(fallback.config));
-      setSavedConfig(cloneMotionConfig(fallback.config));
       saveActiveMotionConfig(fallback.config);
       handleReplay();
     }
@@ -201,17 +330,16 @@ export default function MotionStudio() {
 
   // Handler: Restore default presets
   const handleRestoreDefaults = () => {
-    if (window.confirm("Deseja restaurar todos os presets originais do Skalee TV? Presets customizados serão removidos.")) {
+    if (window.confirm("Deseja restaurar todos os presets originais do Sol TV? Presets customizados locais serão removidos.")) {
       const defaults = restoreDefaultPresets();
       setPresets(defaults);
       const initial = defaults[0] || DEFAULT_PRESETS[0];
       setActivePresetId(initial.id);
       saveActivePresetId(initial.id);
       setCurrentConfig(cloneMotionConfig(initial.config));
-      setSavedConfig(cloneMotionConfig(initial.config));
       saveActiveMotionConfig(initial.config);
       handleReplay();
-      showToast("Presets originais restaurados e aplicados às TVs!", "info");
+      showToast("Presets originais restaurados na biblioteca!", "info");
     }
   };
 
@@ -223,9 +351,21 @@ export default function MotionStudio() {
     setTimeout(() => setCopied(false), 2500);
   };
 
+  // Workspace Dynamic Column Template
+  const workspaceGridStyle: React.CSSProperties = useMemo(() => {
+    if (isCleanView) {
+      return { gridTemplateColumns: "1fr" };
+    }
+    const leftWidth = isLeftPanelOpen ? "320px" : "0px";
+    const rightWidth = isRightPanelOpen ? "290px" : "0px";
+    return {
+      gridTemplateColumns: `${leftWidth} 1fr ${rightWidth}`,
+    };
+  }, [isCleanView, isLeftPanelOpen, isRightPanelOpen]);
+
   return (
     <div className="motion-studio-container">
-      {/* Toast Notification */}
+      {/* Toast Notification Banner */}
       {toast && (
         <div className={`studio-toast-banner toast-${toast.type}`}>
           <span>{toast.message}</span>
@@ -239,18 +379,41 @@ export default function MotionStudio() {
         onSavePreset={handleSavePreset}
         onDuplicatePreset={handleDuplicateCurrent}
         onPublishToTv={handlePublishToTv}
+        sector={sector}
+        onSectorChange={setSector}
+        publishedVersion={publishedVersion}
+        publishedAt={publishedAt}
+        isPublishing={isPublishing}
+        isLeftPanelOpen={isLeftPanelOpen}
+        onToggleLeftPanel={() => setIsLeftPanelOpen((p) => !p)}
+        isRightPanelOpen={isRightPanelOpen}
+        onToggleRightPanel={() => setIsRightPanelOpen((p) => !p)}
+        isCleanView={isCleanView}
+        onToggleCleanView={() => setIsCleanView((p) => !p)}
       />
 
-      {/* 2. Workspace em 3 colunas */}
-      <div className="motion-studio-workspace">
+      {/* 2. Workspace Responsivo com Painéis Recolhíveis */}
+      <div className="motion-studio-workspace" style={workspaceGridStyle}>
         {/* Painel Esquerdo: Controles Accordion */}
-        <MotionControls
-          config={currentConfig}
-          onChange={handleConfigChange}
-          onReplay={handleReplay}
-        />
+        {!isCleanView && (
+          <div
+            style={{
+              display: isLeftPanelOpen ? "flex" : "none",
+              flexDirection: "column",
+              height: "100%",
+              overflow: "hidden",
+            }}
+          >
+            <MotionControls
+              config={currentConfig}
+              onChange={handleConfigChange}
+              onReplay={handleReplay}
+              sector={sector}
+            />
+          </div>
+        )}
 
-        {/* Área Central: Monitor 16:9 Focal Hero */}
+        {/* Área Central: Monitor 16:9 Focal Hero com Zoom & Modo Limpo */}
         <MotionPreview
           config={currentConfig}
           activePresetName={activePreset.name}
@@ -259,19 +422,37 @@ export default function MotionStudio() {
           onSpeedChange={handleSpeedChange}
           onCopyConfig={handleCopyConfig}
           copied={copied}
+          onLayoutChange={handleLayoutChange}
+          onUpdateConfig={handleConfigChange}
+          onUpdateLayoutTuning={handleUpdateLayoutTuning}
+          onResetLayoutTuning={handleResetLayoutTuning}
+          onSaveLayoutToTv={handleSaveLayoutToTv}
+          sector={sector}
+          onSectorChange={setSector}
         />
 
-        {/* Painel Direito: Presets Salvos e Locais */}
-        <MotionPresetPanel
-          presets={presets}
-          activePresetId={activePresetId}
-          onApplyPreset={handleApplyPreset}
-          onSaveAsNew={handleSaveAsNew}
-          onRenamePreset={handleRenamePreset}
-          onDuplicatePreset={handleDuplicatePresetById}
-          onDeletePreset={handleDeletePreset}
-          onRestoreDefaults={handleRestoreDefaults}
-        />
+        {/* Painel Direito: Biblioteca de Presets */}
+        {!isCleanView && (
+          <div
+            style={{
+              display: isRightPanelOpen ? "flex" : "none",
+              flexDirection: "column",
+              height: "100%",
+              overflow: "hidden",
+            }}
+          >
+            <MotionPresetPanel
+              presets={presets}
+              activePresetId={activePresetId}
+              onApplyPreset={handleApplyPreset}
+              onSaveAsNew={handleSaveAsNew}
+              onRenamePreset={handleRenamePreset}
+              onDuplicatePreset={handleDuplicatePresetById}
+              onDeletePreset={handleDeletePreset}
+              onRestoreDefaults={handleRestoreDefaults}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

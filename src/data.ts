@@ -195,15 +195,19 @@ export function contentFromData(params: {
   const sector = params.sector || "acougue";
   const offers = params.offers || [];
   const media = params.media || [];
-  const compositions =
-    params.compositions && params.compositions.length > 0
-      ? params.compositions
-      : synthesizeCompositionsFromOffers(offers);
+
+  const hasExplicitCompositions = Boolean(
+    params.compositions && params.compositions.length > 0,
+  );
+
+  const compositions = hasExplicitCompositions
+    ? params.compositions!
+    : synthesizeCompositionsFromOffers(offers);
 
   const playlist =
-    compositions.length > 0
+    hasExplicitCompositions || compositions.length > 0
       ? buildCompositionPlaylist(compositions, media)
-      : buildUnifiedPlaylist(offers, media);
+      : buildUnifiedPlaylist(offers.filter((o) => o.active), media);
 
   return {
     sector,
@@ -248,6 +252,7 @@ export function newOffer(sector = "acougue"): Offer {
     active: true,
     displayOrder: 0,
     layout: "single",
+    imageScale: 1,
   };
 }
 

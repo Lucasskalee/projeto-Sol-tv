@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, X, Clock, Layers, Grid, Sliders, Eye } from "lucide-react";
+import { Check, X, Clock, Eye } from "lucide-react";
 import type { Offer } from "../../../types";
 import {
   getOfferLayoutCapacity,
@@ -37,6 +37,7 @@ export function CompositionEditor({
   );
   const [error, setError] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
+  const [testing, setTesting] = useState(false);
 
   const maxCapacity = getOfferLayoutCapacity(layout);
 
@@ -143,7 +144,7 @@ export function CompositionEditor({
 
   const modalElement = (
     <div className="composition-editor-modal-overlay">
-      <div className="composition-editor-modal">
+      <div className={`composition-editor-modal ${testing ? "is-testing" : ""}`} role="dialog" aria-modal="true" aria-label="Editor de camada">
         <header className="composition-editor-header">
           <div>
             <h2>
@@ -172,6 +173,7 @@ export function CompositionEditor({
         )}
 
         <div className="composition-editor-body">
+          <div className="composition-edit-fields" hidden={testing}>
           {/* PASSO 1: Escolha do Formato */}
           <section className="editor-step-section">
             <div className="step-header">
@@ -251,16 +253,18 @@ export function CompositionEditor({
             </div>
           </section>
 
+          </div>
           {/* PASSO 5: Pré-visualização Real */}
           <section className="editor-step-section">
             <div className="step-header">
               <span className="step-number">5</span>
               <div>
-                <h3>Pré-visualização da Camada</h3>
-                <p>Verifique o resultado visual da organização dos produtos na televisão.</p>
+                <h3>{testing ? "Modo teste da camada" : "Pré-visualização da Camada"}</h3>
+                <p>{testing ? "Teste o rascunho antes de salvar. A programação da TV permanece igual." : "Verifique o resultado visual da organização dos produtos na televisão."}</p>
               </div>
             </div>
             <CompositionPreview
+              key={testing ? "test" : "inline"}
               composition={previewComposition}
               sectorLabel={sectorLabel}
             />
@@ -268,6 +272,16 @@ export function CompositionEditor({
         </div>
 
         <footer className="composition-editor-footer">
+          <button
+            type="button"
+            className="btn btn-secondary composition-test-btn"
+            onClick={() => setTesting((value) => !value)}
+            disabled={selectedOffers.length === 0 || saving}
+            aria-pressed={testing}
+          >
+            <Eye size={16} />
+            {testing ? "Voltar à edição" : "Testar camada"}
+          </button>
           <button
             type="button"
             className="btn btn-secondary"
@@ -294,4 +308,3 @@ export function CompositionEditor({
     ? createPortal(modalElement, document.body)
     : modalElement;
 }
-

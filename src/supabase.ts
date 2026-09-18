@@ -9,8 +9,11 @@ import { contentFromData } from "./data";
 import type { Offer, SolTvMedia, TvContent } from "./types";
 import type { OfferComposition } from "./offers/compositions";
 import { getSectorThemeSlug, setSectorThemeSlug } from "./themes/resolveTheme";
+import type { MotionConfig, VisualConfigData } from "./motion/types";
+import { DEFAULT_MOTION_CONFIG, cloneMotionConfig } from "./motion/defaults";
+import { safeLocalStorageSetItem, sanitizeMotionConfigForStorage } from "./motion/storage";
 
-export type { AuthChangeEvent, Session, User };
+export type { AuthChangeEvent, Session, User, VisualConfigData };
 
 export const TV_MEDIA_BUCKET = "tv-media";
 
@@ -231,6 +234,7 @@ type DbOffer = {
   starts_at: string | null;
   ends_at: string | null;
   layout: "single" | "pair" | "grid";
+  image_scale?: number | null;
   created_at: string;
 };
 
@@ -288,6 +292,7 @@ function fromDbOffer(row: DbOffer): Offer {
     active: row.active,
     displayOrder: row.display_order || 0,
     layout: row.layout || "single",
+    imageScale: typeof row.image_scale === "number" && row.image_scale > 0 ? Number(row.image_scale) : 1,
   };
 }
 
@@ -314,6 +319,7 @@ function toDbOffer(offer: Offer): Omit<DbOffer, "created_at"> {
       ? new Date(`${offer.endsAt}T23:59:59`).toISOString()
       : null,
     layout: offer.layout,
+    image_scale: typeof offer.imageScale === "number" && offer.imageScale > 0 ? offer.imageScale : 1,
   };
 }
 
@@ -797,6 +803,285 @@ export async function upsertSectorTheme(
   }
 }
 
+function cacheVisualConfigKey(sector = "acougue") {
+  return `sol-tv-${sector.toLowerCase()}-visual-config-v2`;
+}
+
+export function cacheVisualConfig(sector: string, data: VisualConfigData) {
+  try {
+    const sanitizedData: VisualConfigData = {
+      ...data,
+      draftConfig: sanitizeMotionConfigForStorage(data.draftConfig),
+      publishedConfig: sanitizeMotionConfigForStorage(data.publishedConfig),
+    };
+    safeLocalStorageSetItem(cacheVisualConfigKey(sector), JSON.stringify(sanitizedData));
+  } catch {
+    // Cache is only a contingency
+  }
+}
+
+export function loadCachedVisualConfig(sector = "acougue"): VisualConfigData {
+  const normalizedSector = sector.toLowerCase();
+  try {
+    const raw = localStorage.getItem(cacheVisualConfigKey(normalizedSector));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.publishedConfig) {
+        return {
+          sector: normalizedSector,
+          draftConfig: cloneMotionConfig(parsed.draftConfig || parsed.publishedConfig || DEFAULT_MOTION_CONFIG),
+          publishedConfig: cloneMotionConfig(parsed.publishedConfig || DEFAULT_MOTION_CONFIG),
+          publishedVersion: Number(parsed.publishedVersion) || 1,
+          publishedAt: parsed.publishedAt || new Date().toISOString(),
+          updatedAt: parsed.updatedAt || new Date().toISOString(),
+        };
+      }
+    }
+  } catch {
+    // ignore parse error
+  }
+
+  const fallbackConfig = cloneMotionConfig(DEFAULT_MOTION_CONFIG);
+  return {
+    sector: normalizedSector,
+    draftConfig: fallbackConfig,
+    publishedConfig: fallbackConfig,
+    publishedVersion: 1,
+    publishedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function loadVisualConfig(sector = "acougue"): Promise<VisualConfigData> {
+  const normalizedSector = sector.toLowerCase();
+  const cached = loadCachedVisualConfig(normalizedSector);
+
+  if (!supabase) return cached;
+
+  try {
+    const { data, error } = await supabase
+      .from("sol_tv_visual_configs")
+      .select("*")
+      .eq("sector", normalizedSector)
+      .maybeSingle();
+
+    if (error) {
+      if (error.code === "42P01" || error.code === "PGRST205") {
+        console.warn("[SOL TV] Tabela sol_tv_visual_configs ainda não criada no Supabase. Usando cache/padrão.");
+        return cached;
+      }
+      throw error;
+    }
+
+    if (!data) {
+      return cached;
+    }
+
+    const row = data as {
+      sector: string;
+      draft_config: MotionConfig;
+      published_config: MotionConfig;
+      published_version: number;
+      published_at: string;
+      updated_at: string;
+    };
+
+    const visualData: VisualConfigData = {
+      sector: normalizedSector,
+      draftConfig: cloneMotionConfig(row.draft_config || row.published_config || DEFAULT_MOTION_CONFIG),
+      publishedConfig: cloneMotionConfig(row.published_config || DEFAULT_MOTION_CONFIG),
+      publishedVersion: Number(row.published_version) || 1,
+      publishedAt: row.published_at || new Date().toISOString(),
+      updatedAt: row.updated_at || new Date().toISOString(),
+    };
+
+    cacheVisualConfig(normalizedSector, visualData);
+    return visualData;
+  } catch (err) {
+    console.error("[SOL TV] Erro ao carregar configuração visual:", err);
+    return cached;
+  }
+}
+
+export async function saveDraftVisualConfig(
+  sector = "acougue",
+  draftConfig: MotionConfig,
+): Promise<void> {
+  const normalizedSector = sector.toLowerCase();
+  const current = loadCachedVisualConfig(normalizedSector);
+  const sanitizedDraft = sanitizeMotionConfigForStorage(draftConfig);
+  const sanitizedPublished = sanitizeMotionConfigForStorage(current.publishedConfig || draftConfig);
+
+  const updatedData: VisualConfigData = {
+    ...current,
+    draftConfig: sanitizedDraft,
+    updatedAt: new Date().toISOString(),
+  };
+  cacheVisualConfig(normalizedSector, updatedData);
+
+  if (!supabase) return;
+
+  try {
+    const payload = {
+      sector: normalizedSector,
+      draft_config: sanitizedDraft,
+      published_config: sanitizedPublished,
+      published_version: current.publishedVersion || 1,
+      published_at: current.publishedAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from("sol_tv_visual_configs")
+      .upsert(payload);
+
+    if (error) {
+      if (error.code === "42P01" || error.code === "PGRST205") {
+        console.warn("[SOL TV] Tabela sol_tv_visual_configs ainda não criada no Supabase.");
+        return;
+      }
+      throw error;
+    }
+  } catch (err) {
+    console.warn("[SOL TV] Não foi possível salvar rascunho visual no Supabase:", err);
+  }
+}
+
+export async function publishVisualConfig(
+  sector = "acougue",
+  configToPublish: MotionConfig,
+): Promise<VisualConfigData> {
+  const normalizedSector = sector.toLowerCase();
+  const current = await loadVisualConfig(normalizedSector);
+  const nextVersion = (current.publishedVersion || 0) + 1;
+  const now = new Date().toISOString();
+  const sanitizedConfig = sanitizeMotionConfigForStorage(configToPublish);
+
+  const publishedData: VisualConfigData = {
+    sector: normalizedSector,
+    draftConfig: cloneMotionConfig(sanitizedConfig),
+    publishedConfig: cloneMotionConfig(sanitizedConfig),
+    publishedVersion: nextVersion,
+    publishedAt: now,
+    updatedAt: now,
+  };
+
+  cacheVisualConfig(normalizedSector, publishedData);
+
+  // Sync sector theme slug in themes table as well
+  if (configToPublish.themeSlug) {
+    void upsertSectorTheme(normalizedSector, configToPublish.themeSlug).catch(() => {});
+  }
+
+  if (!supabase) return publishedData;
+
+  const payload = {
+    sector: normalizedSector,
+    draft_config: sanitizedConfig,
+    published_config: sanitizedConfig,
+    published_version: nextVersion,
+    published_at: now,
+    updated_at: now,
+  };
+
+  console.log(`[SOL TV Visual] Publicando versão v${nextVersion} para o setor ${normalizedSector}:`, payload);
+
+  const { error } = await supabase
+    .from("sol_tv_visual_configs")
+    .upsert(payload);
+
+  if (error) {
+    console.error("[SOL TV Visual] Erro ao publicar configuração no Supabase:", error);
+    if (error.code === "42P01" || error.code === "PGRST205") {
+      console.warn("[SOL TV Visual] Execute database/sol_tv_visual_configs.sql no SQL Editor do Supabase.");
+      throw new Error(
+        "A tabela 'sol_tv_visual_configs' precisa ser criada no Supabase para sincronizar entre diferentes computadores e telas. Execute o arquivo SQL 'database/sol_tv_visual_configs.sql' no SQL Editor do Supabase."
+      );
+    }
+    throw error;
+  }
+
+  console.log(`[SOL TV Visual] Versão v${nextVersion} publicada com sucesso no Supabase!`);
+  return publishedData;
+}
+
+export function subscribeToVisualConfig(
+  sector = "acougue",
+  onVisualUpdate: (data: VisualConfigData) => void,
+  onStatus?: (status: "online" | "syncing" | "offline") => void,
+): () => void {
+  const normalizedSector = sector.toLowerCase();
+  if (!supabase) return () => undefined;
+
+  const channelName = `sol-tv-visual-${normalizedSector}-${Math.random().toString(36).slice(2, 9)}`;
+
+  const handleReload = async () => {
+    onStatus?.("syncing");
+    try {
+      const data = await loadVisualConfig(normalizedSector);
+      onVisualUpdate(data);
+      onStatus?.("online");
+    } catch {
+      onStatus?.("offline");
+    }
+  };
+
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "sol_tv_visual_configs",
+      },
+      (payload) => {
+        console.log(`[SOL TV Realtime Visual] Alteração em sol_tv_visual_configs:`, payload);
+        const newRecord = payload.new as {
+          sector?: string;
+          draft_config?: MotionConfig;
+          published_config?: MotionConfig;
+          published_version?: number;
+          published_at?: string;
+          updated_at?: string;
+        } | undefined;
+
+        if (newRecord && newRecord.sector && newRecord.sector.toLowerCase() !== normalizedSector) {
+          return;
+        }
+
+        if (newRecord?.published_config) {
+          const updated: VisualConfigData = {
+            sector: normalizedSector,
+            draftConfig: cloneMotionConfig(newRecord.draft_config || newRecord.published_config),
+            publishedConfig: cloneMotionConfig(newRecord.published_config),
+            publishedVersion: Number(newRecord.published_version) || 1,
+            publishedAt: newRecord.published_at || new Date().toISOString(),
+            updatedAt: newRecord.updated_at || new Date().toISOString(),
+          };
+          cacheVisualConfig(normalizedSector, updated);
+          onVisualUpdate(updated);
+        } else {
+          void handleReload();
+        }
+      },
+    )
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        onStatus?.("online");
+        void handleReload();
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        onStatus?.("offline");
+      }
+    });
+
+  return () => {
+    if (supabase) {
+      void supabase.removeChannel(channel);
+    }
+  };
+}
+
 export async function loadOffers(
   sector = "acougue",
   activeOnly = false,
@@ -820,12 +1105,28 @@ export async function loadOffers(
 
 export async function upsertOffer(offer: Offer) {
   if (!supabase) throw new Error("Supabase não configurado.");
-  const { error } = await supabase.from("sol_tv_offers").upsert(toDbOffer(offer));
-  if (error) throw error;
+  const payload = toDbOffer(offer);
+  const { error } = await supabase.from("sol_tv_offers").upsert(payload);
+  if (error) {
+    if (error.code === "42703" || error.code === "PGRST204" || error.message?.includes("image_scale")) {
+      console.warn("[SOL TV] Coluna image_scale ainda não criada no sol_tv_offers. Salvando sem a coluna.");
+      const fallbackPayload = { ...payload };
+      delete (fallbackPayload as Record<string, unknown>).image_scale;
+      const { error: fallbackError } = await supabase.from("sol_tv_offers").upsert(fallbackPayload);
+      if (fallbackError) throw fallbackError;
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function deleteOffer(id: string) {
   if (!supabase) throw new Error("Supabase não configurado.");
+  try {
+    await supabase.from("sol_tv_composition_items").delete().eq("offer_id", id);
+  } catch {
+    // ignore if table does not exist
+  }
   const { error } = await supabase.from("sol_tv_offers").delete().eq("id", id);
   if (error) throw error;
 }

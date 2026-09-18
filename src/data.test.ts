@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUnifiedPlaylist } from "./data";
+import { buildUnifiedPlaylist, contentFromData } from "./data";
 import type { Offer, SolTvMedia } from "./types";
 
 const offer: Offer = {
@@ -39,6 +39,14 @@ const media: SolTvMedia[] = [
 ];
 
 describe("buildUnifiedPlaylist baseline", () => {
+  it("does not recreate product slides when every configured layer is hidden", () => {
+    const content = contentFromData({ offers: [offer], compositions: [{
+      id: "hidden", sector: "acougue", layout: "hero", duration: 8,
+      position: 0, active: false, offers: [offer],
+    }] });
+    expect(content.playlist).toEqual([]);
+    expect(content.compositions[0].active).toBe(false);
+  });
   it("keeps offers, images and videos in the unified position order", () => {
     const playlist = buildUnifiedPlaylist([offer], media);
 
