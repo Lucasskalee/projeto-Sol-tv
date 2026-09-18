@@ -189,8 +189,14 @@ export function FireSparks({
           className={`fire-spark fire-spark-${p.tier}`}
           style={
             {
+              left: `${p.x}%`,
+              width: `${p.size}px`,
+              height: `${Math.round(p.size * (p.tier === "strong" ? 3.6 : 3))}px`,
+              animationDuration: `${p.duration}s`,
+              animationDelay: `${p.delay}s`,
               "--x": `${p.x}%`,
               "--size": `${p.size}px`,
+              "--spark-height": `${Math.round(p.size * (p.tier === "strong" ? 3.6 : 3))}px`,
               "--duration": `${p.duration}s`,
               "--delay": `${p.delay}s`,
               "--drift": `${p.drift}px`,
