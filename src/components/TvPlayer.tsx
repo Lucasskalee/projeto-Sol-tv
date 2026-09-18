@@ -176,10 +176,7 @@ export function TvPlayer({
     activeMotion?.visibility?.brushCorners !== false &&
     activeMotion?.fx?.brushCorners?.enabled !== false &&
     isDecorationsVisible;
-  const isFireSparksVisible =
-    activeMotion?.visibility?.fireSparks !== false &&
-    (activeMotion?.fx?.fireSparks?.enabled !== false &&
-      activeMotion?.fireSparks?.enabled !== false);
+  const isFireSparksVisible = activeMotion?.visibility?.fireSparks !== false;
   const isBadgeAllowed = activeMotion?.visibility?.badge !== false && activeMotion?.badge?.visible !== false;
   const isOldPriceVisible = activeMotion?.visibility?.oldPrice !== false;
   const isUnitVisible = activeMotion?.visibility?.unit !== false;
@@ -927,14 +924,14 @@ export function TvPlayer({
             <FireSparks
               enabled={true}
               intensity={activeMotion?.fx?.fireSparks?.intensity || activeMotion?.fireSparks?.intensity || "commercial"}
-              particleCount={activeMotion?.fx?.fireSparks?.particleCount ?? activeMotion?.fireSparks?.particleCount}
+              particleCount={activeMotion?.fx?.fireSparks?.particleCount ?? activeMotion?.fireSparks?.particleCount ?? 28}
               speed={activeMotion?.fx?.fireSparks?.speed ?? activeMotion?.fireSparks?.speed ?? 1}
-              size={activeMotion?.fx?.fireSparks?.size ?? activeMotion?.fireSparks?.size ?? 1}
+              size={activeMotion?.fx?.fireSparks?.size ?? activeMotion?.fireSparks?.size ?? 1.1}
               bottomGlow={activeMotion?.fx?.fireSparks?.bottomGlow ?? activeMotion?.fireSparks?.bottomGlow ?? true}
-              bottomGlowOpacity={activeMotion?.fx?.fireSparks?.bottomGlowOpacity ?? activeMotion?.fireSparks?.bottomGlowOpacity ?? 25}
+              bottomGlowOpacity={activeMotion?.fx?.fireSparks?.bottomGlowOpacity ?? activeMotion?.fireSparks?.bottomGlowOpacity ?? 45}
               maxHeight={activeMotion?.fx?.fireSparks?.maxHeight ?? activeMotion?.fireSparks?.maxHeight ?? 105}
               performance={activeMotion?.fx?.fireSparks?.performance || activeMotion?.fireSparks?.performance || "normal"}
-              zIndex={10}
+              zIndex={50}
             />
           )}
         </div>
