@@ -25,6 +25,7 @@ import { toThemeStyle } from "../themes/toThemeStyle";
 import { normalizeOfferLayout, type OfferLayout } from "../offers/layouts";
 import type { MotionConfig } from "../motion/types";
 import { loadActiveMotionConfig } from "../motion/storage";
+import { useCachedMedia, preloadMediaList, pruneMediaCache } from "../mediaCache";
 
 export type TvPlayerProps = {
   content: TvContent;
@@ -62,7 +63,6 @@ export function TvPlayer({
   const exitTimerRef = useRef<number | null>(null);
   const paintRevealTimerRef = useRef<number | null>(null);
   const shell = useRef<HTMLDivElement>(null);
-  const preloadedUrlsRef = useRef<Set<string>>(new Set());
 
   // Resolve motion configuration (from props or local persistence)
   const activeMotion = useMemo(() => {
@@ -74,6 +74,11 @@ export function TvPlayer({
     }
     return null;
   }, [motionConfig]);
+
+  // Resolve cached background image
+  const rawBgImageUrl = activeMotion?.background?.imageUrl;
+  const { url: cachedBgImageUrl } = useCachedMedia(rawBgImageUrl);
+  const effectiveBgImageUrl = cachedBgImageUrl || rawBgImageUrl;
 
   // Theme resolution overlayed with active motion tokens
   const effectiveTheme = useMemo(() => {
@@ -303,8 +308,8 @@ export function TvPlayer({
       if (co.priceShadow !== undefined) styles["--theme-price-shadow"] = co.priceShadow;
     } else if (activeMotion.background) {
       // General background override (Solid, Gradient, Image)
-      if (activeMotion.background.type === "image" && activeMotion.background.imageUrl) {
-        const bgImg = `url(${activeMotion.background.imageUrl})`;
+      if (activeMotion.background.type === "image" && effectiveBgImageUrl) {
+        const bgImg = `url(${effectiveBgImageUrl})`;
         styles["--lab-custom-bg-image"] = bgImg;
         styles["--lab-custom-bg"] = `${bgImg} center/cover no-repeat`;
         styles["--bf-custom-bg"] = `${bgImg} center/cover no-repeat`;
@@ -402,28 +407,38 @@ export function TvPlayer({
 
   const prevItemIdRef = useRef<string | undefined>(currentItem?.id);
 
-  // Preload the next item to prevent black screens (without redundant requests)
+  // Preload all playlist & visual assets into persistent Cache Storage
   useEffect(() => {
-    if (playlist.length <= 1) return;
-    const nextIdx = (safeIndex + 1) % playlist.length;
-    const nextItem = playlist[nextIdx];
-    if (!nextItem) return;
+    const urlsToPreload: string[] = [];
+    content.offers.forEach((o) => {
+      if (o.image) urlsToPreload.push(o.image);
+      if (o.video) urlsToPreload.push(o.video);
+    });
+    content.media.forEach((m) => {
+      if (m.mediaUrl) urlsToPreload.push(m.mediaUrl);
+    });
+    content.compositions.forEach((c) => {
+      c.offers.forEach((o) => {
+        if (o.image) urlsToPreload.push(o.image);
+        if (o.video) urlsToPreload.push(o.video);
+      });
+    });
+    if (activeMotion?.logo?.image) urlsToPreload.push(activeMotion.logo.image);
+    if (activeMotion?.badge?.image) urlsToPreload.push(activeMotion.badge.image);
+    if (activeMotion?.blackFridayImage?.src) urlsToPreload.push(activeMotion.blackFridayImage.src);
+    if (activeMotion?.background?.imageUrl) urlsToPreload.push(activeMotion.background.imageUrl);
 
-    const urlToPreload =
-      nextItem.kind === "image"
-        ? nextItem.src
-        : nextItem.kind === "offer"
-          ? nextItem.offer.image
-          : nextItem.kind === "composition"
-            ? nextItem.composition.offers[0]?.image
-            : null;
+    void preloadMediaList(urlsToPreload);
 
-    if (urlToPreload && !preloadedUrlsRef.current.has(urlToPreload)) {
-      preloadedUrlsRef.current.add(urlToPreload);
-      const img = new Image();
-      img.src = urlToPreload;
-    }
-  }, [safeIndex, playlist]);
+    // Prune obsolete orphan files after 30s
+    const cleanupTimer = window.setTimeout(() => {
+      void pruneMediaCache(urlsToPreload);
+    }, 30000);
+
+    return () => {
+      window.clearTimeout(cleanupTimer);
+    };
+  }, [content, activeMotion]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -593,7 +608,9 @@ export function TvPlayer({
           ? "FRENTE DE CAIXAS"
           : content.sector.toUpperCase());
 
-  const logoImageSrc = activeMotion?.logo.image || "/logo-sol.png";
+  const rawLogoSrc = effectiveLogoConfig?.image || activeMotion?.logo.image || "/logo-sol.png";
+  const { url: cachedLogoSrc } = useCachedMedia(rawLogoSrc);
+  const logoImageSrc = cachedLogoSrc || rawLogoSrc;
 
   function renderSlideContent(item: TvPlaylistItem) {
     if (item.kind === "composition") {

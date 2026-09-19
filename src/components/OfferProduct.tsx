@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Offer } from "../types";
+import type { BadgePosition } from "../motion/types";
+import { useCachedMedia } from "../mediaCache";
 
 export function ProductImage({
   src,
@@ -15,11 +17,16 @@ export function ProductImage({
   scale?: number;
 }) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
+  const { url: cachedSrc } = useCachedMedia(src);
+  const effectiveSrc = cachedSrc || src;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [effectiveSrc]);
 
   const effectiveScale = typeof scale === "number" && scale > 0 ? scale : 1;
 
-  return src && !failed ? (
+  return effectiveSrc && !failed ? (
     <div
       className="product-image-scaler"
       style={{
@@ -28,7 +35,7 @@ export function ProductImage({
     >
       <img
         className={className}
-        src={src}
+        src={effectiveSrc}
         alt={name}
         style={style}
         onError={() => setFailed(true)}
@@ -52,6 +59,12 @@ export function VideoPlayer({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState(false);
+  const { url: cachedSrc } = useCachedMedia(src);
+  const effectiveSrc = cachedSrc || src;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [effectiveSrc]);
 
   useEffect(() => {
     if (paused) {
@@ -59,14 +72,14 @@ export function VideoPlayer({
     } else {
       ref.current?.play().catch(() => setFailed(true));
     }
-  }, [paused, src]);
+  }, [paused, effectiveSrc]);
 
   return failed ? (
     <div className="media-fallback">Vídeo indisponível</div>
   ) : (
     <video
       ref={ref}
-      src={src}
+      src={effectiveSrc}
       autoPlay
       muted
       loop
@@ -115,8 +128,6 @@ export function OfferPrice({
   );
 }
 
-import type { BadgePosition } from "../motion/types";
-
 export function OfferProduct({
   offer,
   paused,
@@ -156,6 +167,9 @@ export function OfferProduct({
   cardStyle?: "transparent" | "card" | "glass" | "bordered";
   animationDelay: string;
 }) {
+  const { url: cachedBadgeImage } = useCachedMedia(badgeImage);
+  const effectiveBadgeImage = cachedBadgeImage || badgeImage;
+
   const baseTranslateX =
     badgePosition === "top-center"
       ? `calc(-50% + ${badgeOffsetX}px)`
@@ -204,9 +218,9 @@ export function OfferProduct({
           )
         )}
         {isBadgeAllowed && (
-          badgeType === "image" && badgeImage ? (
+          badgeType === "image" && effectiveBadgeImage ? (
             <img
-              src={badgeImage}
+              src={effectiveBadgeImage}
               alt={badgeLabel || "Selo da Oferta"}
               className={`badge-image-tag badge-pos-${badgePosition}`}
               style={{

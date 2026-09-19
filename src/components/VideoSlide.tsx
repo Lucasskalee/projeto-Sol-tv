@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useCachedMedia } from "../mediaCache";
 
 export function VideoSlide({
   src,
@@ -15,6 +16,12 @@ export function VideoSlide({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState(false);
+  const { url: cachedSrc } = useCachedMedia(src);
+  const effectiveSrc = cachedSrc || src;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [effectiveSrc]);
 
   useEffect(() => {
     const video = ref.current;
@@ -31,10 +38,10 @@ export function VideoSlide({
     return () => {
       video.pause();
     };
-  }, [paused, src]);
+  }, [paused, effectiveSrc]);
 
   function handleError() {
-    console.error("Falha ao carregar ou reproduzir vídeo:", src);
+    console.error("Falha ao carregar ou reproduzir vídeo:", effectiveSrc);
     setFailed(true);
     if (onError) onError();
   }
@@ -56,7 +63,7 @@ export function VideoSlide({
     <div className="media-slide video-slide">
       <video
         ref={ref}
-        src={src}
+        src={effectiveSrc}
         autoPlay
         muted
         playsInline
@@ -73,4 +80,3 @@ export function VideoSlide({
     </div>
   );
 }
-

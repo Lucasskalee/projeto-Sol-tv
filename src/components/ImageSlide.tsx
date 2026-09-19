@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useCachedMedia } from "../mediaCache";
 
 export function ImageSlide({
   src,
@@ -10,9 +11,15 @@ export function ImageSlide({
   onError?: () => void;
 }) {
   const [failed, setFailed] = useState(false);
+  const { url: cachedSrc } = useCachedMedia(src);
+  const effectiveSrc = cachedSrc || src;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [effectiveSrc]);
 
   function handleError() {
-    console.error("Falha ao carregar imagem:", src);
+    console.error("Falha ao carregar imagem:", effectiveSrc);
     setFailed(true);
     if (onError) onError();
   }
@@ -29,7 +36,7 @@ export function ImageSlide({
   return (
     <div className="media-slide image-slide">
       <img
-        src={src}
+        src={effectiveSrc}
         alt={title || "Conteúdo SOL TV"}
         className="full-media-image ken-burns-image"
         onError={handleError}
@@ -42,4 +49,3 @@ export function ImageSlide({
     </div>
   );
 }
-

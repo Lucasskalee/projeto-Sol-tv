@@ -1,5 +1,6 @@
 import React from "react";
 import type { MotionBlackFridayImageConfig } from "../../motion/types";
+import { useCachedMedia } from "../../mediaCache";
 
 export interface BlackFridayImageElementProps {
   config?: MotionBlackFridayImageConfig;
@@ -14,6 +15,9 @@ export function BlackFridayImageElement({
   replayKey = 0,
   className = "",
 }: BlackFridayImageElementProps) {
+  const { url: cachedSrc } = useCachedMedia(config?.src);
+  const effectiveSrc = cachedSrc || config?.src;
+
   if (visible === false || config?.visible === false) {
     return null;
   }
@@ -78,9 +82,9 @@ export function BlackFridayImageElement({
       aria-hidden="true"
     >
       <div className="bf-custom-image-wrapper">
-        {config?.src ? (
+        {effectiveSrc ? (
           <img
-            src={config.src}
+            src={effectiveSrc}
             alt="Black Friday"
             className="bf-custom-image-tag"
             style={{
@@ -100,4 +104,3 @@ export function BlackFridayImageElement({
     </div>
   );
 }
-

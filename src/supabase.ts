@@ -5,7 +5,7 @@ import {
   type Session,
   type User,
 } from "@supabase/supabase-js";
-import { contentFromData } from "./data";
+import { contentFromData, demoContent } from "./data";
 import type { Offer, SolTvMedia, TvContent } from "./types";
 import type { OfferComposition } from "./offers/compositions";
 import { getSectorThemeSlug, setSectorThemeSlug } from "./themes/resolveTheme";
@@ -464,6 +464,9 @@ export function loadCachedContent(sector = "acougue"): TvContent {
   const offers = loadCachedOffers(sector);
   const media = loadCachedMedia(sector);
   const compositions = loadCachedCompositions(sector);
+  if (!databaseConfigured && offers.length === 0 && media.length === 0 && compositions.length === 0) {
+    return demoContent(sector);
+  }
   return contentFromData({ sector, offers, media, compositions });
 }
 
