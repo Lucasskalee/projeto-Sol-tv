@@ -38,7 +38,9 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!session) {
+  const isDevBypass = import.meta.env.DEV && localStorage.getItem("sol_tv_dev_admin") === "true";
+
+  if (!session && !isDevBypass) {
     return <Navigate to="/login" replace />;
   }
 

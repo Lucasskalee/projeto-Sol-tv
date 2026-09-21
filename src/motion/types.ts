@@ -13,7 +13,7 @@ export type LogoPosition =
 export type SectorLayout = "column" | "row" | "hidden";
 export type PriceImpact = "impact" | "smooth" | "none";
 export type ShimmerColor = "gold" | "silver" | "white";
-export type BackgroundType = "solid" | "gradient" | "image";
+export type BackgroundType = "solid" | "gradient" | "image" | "sunburst";
 export type ProductCardStyle = "transparent" | "card" | "glass" | "bordered";
 export type BadgeType = "text" | "image";
 export type BadgePosition = "top-right" | "top-left" | "top-center" | "bottom-right" | "bottom-left" | "over-price";
@@ -64,13 +64,23 @@ export interface MotionBadgeConfig {
   visible?: boolean; // Show or hide badge / tag promocional
 }
 
+export interface MotionSunburstConfig {
+  primaryColor?: string; // Cor primária dos raios (default: #FFB800)
+  secondaryColor?: string; // Cor secundária dos raios (default: #FF6600)
+  speed?: number; // Duração da rotação em segundos (ex: 20 a 150s, default: 60)
+  raysCount?: number; // Quantidade de raios radiais (ex: 12 a 48, default: 24)
+  scale?: number; // Escala/Zoom dos raios (ex: 1.0 a 3.0, default: 1.5)
+  glowPulse?: boolean; // Respiração/pulso do brilho radial central (default: true)
+}
+
 export interface MotionBackgroundConfig {
-  type: BackgroundType; // "solid" | "gradient" | "image"
+  type: BackgroundType; // "solid" | "gradient" | "image" | "sunburst"
   color: string; // Solid or base color (e.g. #080a0e)
   gradientStart: string; // Gradient start color
   gradientEnd: string; // Gradient end color
   gradientAngle: number; // in degrees, e.g. 135
   imageUrl?: string; // Custom background image URL / Data URL
+  sunburst?: MotionSunburstConfig;
 }
 
 export interface MotionProductCardConfig {

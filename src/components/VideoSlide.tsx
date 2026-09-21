@@ -5,19 +5,25 @@ export function VideoSlide({
   src,
   title,
   paused = false,
+  mode = "tv",
   onEnded,
   onError,
 }: {
   src: string;
   title?: string;
   paused?: boolean;
+  mode?: "tv" | "preview";
   onEnded?: () => void;
   onError?: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState(false);
+  const [previewManualPlay, setPreviewManualPlay] = useState(false);
   const { url: cachedSrc } = useCachedMedia(src);
   const effectiveSrc = cachedSrc || src;
+
+  // Em modo preview no Admin, não auto-reproduz continuamente a menos que o operador clique
+  const isEffectivelyPaused = paused || (mode === "preview" && !previewManualPlay);
 
   useEffect(() => {
     setFailed(false);
@@ -27,7 +33,7 @@ export function VideoSlide({
     const video = ref.current;
     if (!video) return;
 
-    if (paused) {
+    if (isEffectivelyPaused) {
       video.pause();
     } else {
       video.play().catch((err) => {
@@ -38,7 +44,7 @@ export function VideoSlide({
     return () => {
       video.pause();
     };
-  }, [paused, effectiveSrc]);
+  }, [isEffectivelyPaused, effectiveSrc]);
 
   function handleError() {
     console.error("Falha ao carregar ou reproduzir vídeo:", effectiveSrc);
@@ -64,14 +70,41 @@ export function VideoSlide({
       <video
         ref={ref}
         src={effectiveSrc}
-        autoPlay
+        autoPlay={!isEffectivelyPaused}
         muted
         playsInline
-        preload="auto"
+        preload={mode === "preview" ? "metadata" : "auto"}
         onEnded={handleEnded}
         onError={handleError}
         className="full-media-video"
       />
+      {mode === "preview" && isEffectivelyPaused && (
+        <button
+          type="button"
+          className="preview-play-overlay-btn"
+          onClick={() => setPreviewManualPlay(true)}
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "8px",
+            background: "rgba(0, 0, 0, 0.45)",
+            border: "none",
+            color: "#ffffff",
+            cursor: "pointer",
+            zIndex: 10,
+          }}
+          title="Clique para reproduzir o vídeo no preview"
+        >
+          <span style={{ fontSize: "36px" }}>▶</span>
+          <span style={{ fontSize: "12px", background: "rgba(0,0,0,0.6)", padding: "4px 10px", borderRadius: "4px" }}>
+            Preview de Vídeo Pausado (Clique para testar)
+          </span>
+        </button>
+      )}
       {title && (
         <div className="media-caption video-caption">
           <h3>{title}</h3>

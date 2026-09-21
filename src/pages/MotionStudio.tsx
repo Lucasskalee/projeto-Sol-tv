@@ -1,8 +1,13 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { MotionToolbar } from "../components/motion/MotionToolbar";
-import { MotionControls } from "../components/motion/MotionControls";
 import { MotionPreview } from "../components/motion/MotionPreview";
-import { MotionPresetPanel } from "../components/motion/MotionPresetPanel";
+import {
+  MotionCategoryNav,
+  type MotionEditorCategory,
+  MotionPropertyInspector,
+  MotionMobileDrawer,
+  MotionPublishConfirmModal,
+} from "../components/motion/editor";
 import {
   loadPresets,
   upsertPreset,
@@ -17,6 +22,7 @@ import {
 import { DEFAULT_PRESETS } from "../motion/presets";
 import { DEFAULT_MOTION_CONFIG, areConfigsEqual, cloneMotionConfig } from "../motion/defaults";
 import type { MotionConfig, MotionPreset } from "../motion/types";
+import type { OfferLayout } from "../offers/layouts";
 import {
   loadVisualConfig,
   saveDraftVisualConfig,
@@ -53,10 +59,12 @@ export default function MotionStudio() {
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
 
-  // 4. Panels & View Modes
-  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(true);
+  // 4. Editor Navigation & View Modes
+  const [activeCategory, setActiveCategory] = useState<MotionEditorCategory>("layout");
   const [isRightPanelOpen, setIsRightPanelOpen] = useState<boolean>(true);
   const [isCleanView, setIsCleanView] = useState<boolean>(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
+  const [isConfirmPublishOpen, setIsConfirmPublishOpen] = useState<boolean>(false);
 
   // 5. UI Playback & Toast State
   const [replayKey, setReplayKey] = useState<number>(0);
@@ -143,37 +151,43 @@ export default function MotionStudio() {
   }, [currentConfig, sector]);
 
   // Handler: Change config (pure state updater, auto-saved via debounced effect)
-  const handleConfigChange = (updater: (prev: MotionConfig) => MotionConfig) => {
-    setCurrentConfig(updater);
-  };
+  const handleConfigChange = useCallback(
+    (updater: (prev: MotionConfig) => MotionConfig) => {
+      setCurrentConfig(updater);
+    },
+    []
+  );
 
   // Handler: Layout change
-  const handleLayoutChange = (layout: import("../offers/layouts").OfferLayout) => {
+  const handleLayoutChange = useCallback((layout: OfferLayout) => {
     setCurrentConfig((prev) => ({ ...prev, layout }));
-    handleReplay();
-  };
+    setReplayKey((k) => k + 1);
+  }, []);
 
   // Handler: Layout tuning update
-  const handleUpdateLayoutTuning = (
-    layout: import("../offers/layouts").OfferLayout,
-    updater: (prev: import("../motion/types").PerLayoutTuning) => import("../motion/types").PerLayoutTuning
-  ) => {
-    setCurrentConfig((prev) => {
-      const currentTunings = prev.layoutTuning || {};
-      const currentLayoutTuning = currentTunings[layout] || {};
-      const nextLayoutTuning = updater(currentLayoutTuning);
-      return {
-        ...prev,
-        layoutTuning: {
-          ...currentTunings,
-          [layout]: nextLayoutTuning,
-        },
-      };
-    });
-  };
+  const handleUpdateLayoutTuning = useCallback(
+    (
+      layout: OfferLayout,
+      updater: (prev: import("../motion/types").PerLayoutTuning) => import("../motion/types").PerLayoutTuning
+    ) => {
+      setCurrentConfig((prev) => {
+        const currentTunings = prev.layoutTuning || {};
+        const currentLayoutTuning = currentTunings[layout] || {};
+        const nextLayoutTuning = updater(currentLayoutTuning);
+        return {
+          ...prev,
+          layoutTuning: {
+            ...currentTunings,
+            [layout]: nextLayoutTuning,
+          },
+        };
+      });
+    },
+    []
+  );
 
   // Handler: Reset layout tuning
-  const handleResetLayoutTuning = (layout: import("../offers/layouts").OfferLayout) => {
+  const handleResetLayoutTuning = useCallback((layout: OfferLayout) => {
     setCurrentConfig((prev) => {
       const currentTunings = { ...(prev.layoutTuning || {}) };
       delete currentTunings[layout];
@@ -183,20 +197,15 @@ export default function MotionStudio() {
       };
     });
     showToast(`Ajustes visuais do layout "${layout.toUpperCase()}" restaurados para o padrão.`, "info");
-  };
-
-  // Handler: Save layout to TV
-  const handleSaveLayoutToTv = () => {
-    handlePublishToTv();
-  };
+  }, [showToast]);
 
   // Handler: Speed change
-  const handleSpeedChange = (speed: number) => {
+  const handleSpeedChange = useCallback((speed: number) => {
     setCurrentConfig((prev) => ({ ...prev, speed }));
-  };
+  }, []);
 
   // Handler: Apply a preset from panel
-  const handleApplyPreset = (preset: MotionPreset) => {
+  const handleApplyPreset = useCallback((preset: MotionPreset) => {
     setActivePresetId(preset.id);
     saveActivePresetId(preset.id);
 
@@ -205,12 +214,12 @@ export default function MotionStudio() {
     saveActiveMotionConfig(cloned);
     void saveDraftVisualConfig(sector, cloned);
 
-    handleReplay();
+    setReplayKey((k) => k + 1);
     showToast(`Preset "${preset.name}" aplicado como rascunho! Clique em "Publicar na TV" para enviar para as telas.`, "info");
-  };
+  }, [sector, showToast]);
 
   // Handler: Save current preset to local library
-  const handleSavePreset = () => {
+  const handleSavePreset = useCallback(() => {
     const updatedPreset: MotionPreset = {
       ...activePreset,
       config: cloneMotionConfig(currentConfig),
@@ -224,10 +233,10 @@ export default function MotionStudio() {
     saveActiveMotionConfig(currentConfig);
 
     showToast(`Preset "${updatedPreset.name}" salvo na biblioteca local.`, "success");
-  };
+  }, [activePreset, currentConfig, showToast]);
 
   // Handler: Explicit publish to TV via Supabase Realtime
-  const handlePublishToTv = async () => {
+  const handlePublishToTv = useCallback(async () => {
     setIsPublishing(true);
     try {
       const published = await publishVisualConfig(sector, currentConfig);
@@ -235,6 +244,7 @@ export default function MotionStudio() {
       setPublishedVersion(published.publishedVersion);
       setPublishedAt(published.publishedAt);
       saveActiveMotionConfig(currentConfig);
+      setIsConfirmPublishOpen(false);
 
       const sectorLabel = SECTORS.find((s) => s.id === sector)?.label || sector.toUpperCase();
       showToast(
@@ -250,10 +260,10 @@ export default function MotionStudio() {
     } finally {
       setIsPublishing(false);
     }
-  };
+  }, [sector, currentConfig, showToast]);
 
   // Handler: Save as brand new preset
-  const handleSaveAsNew = (name: string, description?: string) => {
+  const handleSaveAsNew = useCallback((name: string, description?: string) => {
     const newPreset: MotionPreset = {
       id: `user-preset-${Date.now()}`,
       name,
@@ -271,10 +281,10 @@ export default function MotionStudio() {
     saveActiveMotionConfig(currentConfig);
 
     showToast(`Novo preset "${name}" salvo na biblioteca local!`, "success");
-  };
+  }, [currentConfig, showToast]);
 
-  // Handler: Duplicate preset from toolbar or card
-  const handleDuplicateCurrent = () => {
+  // Handler: Duplicate current preset
+  const handleDuplicateCurrent = useCallback(() => {
     const { updatedPresets, newPreset } = duplicatePreset(activePreset);
     setPresets(updatedPresets);
     setActivePresetId(newPreset.id);
@@ -284,16 +294,16 @@ export default function MotionStudio() {
     void saveDraftVisualConfig(sector, newPreset.config);
 
     showToast(`Preset "${newPreset.name}" duplicado e ativado no rascunho!`, "info");
-  };
+  }, [activePreset, sector, showToast]);
 
-  const handleDuplicatePresetById = (id: string) => {
+  const handleDuplicatePresetById = useCallback((id: string) => {
     const { updatedPresets, newPreset } = duplicatePreset(id);
     setPresets(updatedPresets);
     showToast(`Preset duplicado: "${newPreset.name}"`, "info");
-  };
+  }, [showToast]);
 
   // Handler: Rename user preset
-  const handleRenamePreset = (id: string, newName: string) => {
+  const handleRenamePreset = useCallback((id: string, newName: string) => {
     const target = presets.find((p) => p.id === id);
     if (!target) return;
 
@@ -306,10 +316,10 @@ export default function MotionStudio() {
     const updated = upsertPreset(updatedPreset);
     setPresets(updated);
     showToast(`Preset renomeado para "${newName}"`, "info");
-  };
+  }, [presets, showToast]);
 
   // Handler: Delete user preset
-  const handleDeletePreset = (id: string) => {
+  const handleDeletePreset = useCallback((id: string) => {
     const target = presets.find((p) => p.id === id);
     if (!target) return;
 
@@ -322,14 +332,14 @@ export default function MotionStudio() {
       saveActivePresetId(fallback.id);
       setCurrentConfig(cloneMotionConfig(fallback.config));
       saveActiveMotionConfig(fallback.config);
-      handleReplay();
+      setReplayKey((k) => k + 1);
     }
 
     showToast(`Preset "${target.name}" excluído.`, "info");
-  };
+  }, [activePresetId, presets, showToast]);
 
   // Handler: Restore default presets
-  const handleRestoreDefaults = () => {
+  const handleRestoreDefaults = useCallback(() => {
     if (window.confirm("Deseja restaurar todos os presets originais do Sol TV? Presets customizados locais serão removidos.")) {
       const defaults = restoreDefaultPresets();
       setPresets(defaults);
@@ -338,36 +348,34 @@ export default function MotionStudio() {
       saveActivePresetId(initial.id);
       setCurrentConfig(cloneMotionConfig(initial.config));
       saveActiveMotionConfig(initial.config);
-      handleReplay();
+      setReplayKey((k) => k + 1);
       showToast("Presets originais restaurados na biblioteca!", "info");
     }
-  };
+  }, [showToast]);
 
   // Handler: Copy configuration JSON
-  const handleCopyConfig = () => {
+  const handleCopyConfig = useCallback(() => {
     void navigator.clipboard.writeText(JSON.stringify(currentConfig, null, 2));
     setCopied(true);
     showToast("Configuração JSON copiada para a área de transferência!", "success");
     setTimeout(() => setCopied(false), 2500);
-  };
+  }, [currentConfig, showToast]);
 
-  // Workspace Dynamic Column Template
-  const workspaceGridStyle: React.CSSProperties = useMemo(() => {
-    if (isCleanView) {
-      return { gridTemplateColumns: "1fr" };
+  // Handle Category select on mobile or desktop
+  const handleSelectCategory = useCallback((category: MotionEditorCategory) => {
+    setActiveCategory(category);
+    setIsRightPanelOpen(true);
+    // On mobile, also open the bottom sheet drawer
+    if (window.innerWidth < 768) {
+      setIsMobileDrawerOpen(true);
     }
-    const leftWidth = isLeftPanelOpen ? "320px" : "0px";
-    const rightWidth = isRightPanelOpen ? "290px" : "0px";
-    return {
-      gridTemplateColumns: `${leftWidth} 1fr ${rightWidth}`,
-    };
-  }, [isCleanView, isLeftPanelOpen, isRightPanelOpen]);
+  }, []);
 
   return (
-    <div className="motion-studio-container">
+    <div className="motion-studio-container flex flex-col h-screen w-screen overflow-hidden bg-[#080a0e] text-[#f0f2f5]">
       {/* Toast Notification Banner */}
       {toast && (
-        <div className={`studio-toast-banner toast-${toast.type}`}>
+        <div className={`studio-toast-banner toast-${toast.type} z-50`}>
           <span>{toast.message}</span>
         </div>
       )}
@@ -378,70 +386,70 @@ export default function MotionStudio() {
         isDirty={isDirty}
         onSavePreset={handleSavePreset}
         onDuplicatePreset={handleDuplicateCurrent}
-        onPublishToTv={handlePublishToTv}
+        onPublishToTv={() => setIsConfirmPublishOpen(true)}
         sector={sector}
         onSectorChange={setSector}
         publishedVersion={publishedVersion}
         publishedAt={publishedAt}
         isPublishing={isPublishing}
-        isLeftPanelOpen={isLeftPanelOpen}
-        onToggleLeftPanel={() => setIsLeftPanelOpen((p) => !p)}
         isRightPanelOpen={isRightPanelOpen}
         onToggleRightPanel={() => setIsRightPanelOpen((p) => !p)}
         isCleanView={isCleanView}
         onToggleCleanView={() => setIsCleanView((p) => !p)}
       />
 
-      {/* 2. Workspace Responsivo com Painéis Recolhíveis */}
-      <div className="motion-studio-workspace" style={workspaceGridStyle}>
-        {/* Painel Esquerdo: Controles Accordion */}
+      {/* 2. Workspace Responsivo em 3 Zonas (Desktop) / Canvas + Nav + Drawer (Mobile) */}
+      <div className="motion-studio-workspace flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        {/* Zona A: Barra de Ferramentas / Categorias (76px no desktop) */}
         {!isCleanView && (
-          <div
-            style={{
-              display: isLeftPanelOpen ? "flex" : "none",
-              flexDirection: "column",
-              height: "100%",
-              overflow: "hidden",
-            }}
-          >
-            <MotionControls
-              config={currentConfig}
-              onChange={handleConfigChange}
-              onReplay={handleReplay}
-              sector={sector}
+          <div className="hidden md:flex h-full shrink-0">
+            <MotionCategoryNav
+              activeCategory={activeCategory}
+              onSelectCategory={handleSelectCategory}
+              orientation="vertical"
             />
           </div>
         )}
 
-        {/* Área Central: Monitor 16:9 Focal Hero com Zoom & Modo Limpo */}
-        <MotionPreview
-          config={currentConfig}
-          activePresetName={activePreset.name}
-          replayKey={replayKey}
-          onReplay={handleReplay}
-          onSpeedChange={handleSpeedChange}
-          onCopyConfig={handleCopyConfig}
-          copied={copied}
-          onLayoutChange={handleLayoutChange}
-          onUpdateConfig={handleConfigChange}
-          onUpdateLayoutTuning={handleUpdateLayoutTuning}
-          onResetLayoutTuning={handleResetLayoutTuning}
-          onSaveLayoutToTv={handleSaveLayoutToTv}
-          sector={sector}
-          onSectorChange={setSector}
-        />
+        {/* Zona B: Área Central - Monitor 16:9 Focal Hero */}
+        <main className="motion-preview-center-zone flex-1 flex flex-col h-full min-w-0 overflow-hidden relative">
+          <MotionPreview
+            config={currentConfig}
+            activePresetName={activePreset.name}
+            replayKey={replayKey}
+            onReplay={handleReplay}
+            onSpeedChange={handleSpeedChange}
+            onCopyConfig={handleCopyConfig}
+            copied={copied}
+            onLayoutChange={handleLayoutChange}
+            onUpdateConfig={handleConfigChange}
+            onUpdateLayoutTuning={handleUpdateLayoutTuning}
+            onResetLayoutTuning={handleResetLayoutTuning}
+            onSaveLayoutToTv={() => setIsConfirmPublishOpen(true)}
+            sector={sector}
+            onSectorChange={setSector}
+          />
 
-        {/* Painel Direito: Biblioteca de Presets */}
-        {!isCleanView && (
-          <div
-            style={{
-              display: isRightPanelOpen ? "flex" : "none",
-              flexDirection: "column",
-              height: "100%",
-              overflow: "hidden",
-            }}
-          >
-            <MotionPresetPanel
+          {/* Barra de Categorias Horizontal no Mobile (< 768px) */}
+          {!isCleanView && (
+            <div className="md:hidden shrink-0 border-t border-white/10 bg-black/40">
+              <MotionCategoryNav
+                activeCategory={activeCategory}
+                onSelectCategory={handleSelectCategory}
+                orientation="horizontal"
+              />
+            </div>
+          )}
+        </main>
+
+        {/* Zona C: Painel Contextual de Propriedades (360px no desktop/tablet) */}
+        {!isCleanView && isRightPanelOpen && (
+          <div className="hidden md:flex h-full shrink-0">
+            <MotionPropertyInspector
+              activeCategory={activeCategory}
+              config={currentConfig}
+              onChange={handleConfigChange}
+              onReplay={handleReplay}
               presets={presets}
               activePresetId={activePresetId}
               onApplyPreset={handleApplyPreset}
@@ -450,10 +458,44 @@ export default function MotionStudio() {
               onDuplicatePreset={handleDuplicatePresetById}
               onDeletePreset={handleDeletePreset}
               onRestoreDefaults={handleRestoreDefaults}
+              onResetLayoutTuning={handleResetLayoutTuning}
+              sector={sector}
+              onClose={() => setIsRightPanelOpen(false)}
             />
           </div>
         )}
       </div>
+
+      {/* Mobile Bottom Sheet Drawer (< 768px) */}
+      <MotionMobileDrawer
+        isOpen={isMobileDrawerOpen && !isCleanView}
+        onClose={() => setIsMobileDrawerOpen(false)}
+        activeCategory={activeCategory}
+        config={currentConfig}
+        onChange={handleConfigChange}
+        onReplay={handleReplay}
+        presets={presets}
+        activePresetId={activePresetId}
+        onApplyPreset={handleApplyPreset}
+        onSaveAsNew={handleSaveAsNew}
+        onRenamePreset={handleRenamePreset}
+        onDuplicatePreset={handleDuplicatePresetById}
+        onDeletePreset={handleDeletePreset}
+        onRestoreDefaults={handleRestoreDefaults}
+        onResetLayoutTuning={handleResetLayoutTuning}
+        sector={sector}
+      />
+
+      {/* Modal de Confirmação para Publicar na TV */}
+      <MotionPublishConfirmModal
+        isOpen={isConfirmPublishOpen}
+        onClose={() => setIsConfirmPublishOpen(false)}
+        onConfirm={handlePublishToTv}
+        sector={sector}
+        config={currentConfig}
+        currentVersion={publishedVersion}
+        isPublishing={isPublishing}
+      />
     </div>
   );
 }

@@ -96,11 +96,22 @@ export default function Login() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <div className="brand">
-          <div className="brand-badge">SOL</div>
+        <div className="brand" style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+          <img
+            src="/logo-skalee.jpg"
+            alt="Skalee TV"
+            style={{ width: "44px", height: "44px", borderRadius: "10px", objectFit: "cover", boxShadow: "0 0 12px rgba(168,85,247,0.3)" }}
+            onError={(e) => {
+              (e.currentTarget as HTMLElement).style.display = "none";
+            }}
+          />
           <div>
-            <h1>SOL TV</h1>
-            <p>Painel Administrativo</p>
+            <h1 style={{ margin: 0, fontSize: "20px", fontWeight: 800, letterSpacing: "0.02em" }}>
+              SKALEE <span style={{ color: "var(--skalee-purple)" }}>TV</span>
+            </h1>
+            <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--skalee-text-secondary)" }}>
+              Painel de Gestão
+            </p>
           </div>
         </div>
 

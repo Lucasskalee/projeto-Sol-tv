@@ -10,8 +10,9 @@
  */
 
 import { useEffect, useState } from "react";
+import { recordLocalTelemetry } from "./services/mediaServiceWorker";
 
-export const MEDIA_CACHE_NAME = "sol-tv-media-cache-v1";
+export const MEDIA_CACHE_NAME = "skalee-tv-media-v1";
 
 // Cache em memória de Blob URLs ativas (urlOriginal -> blobUrl)
 const inMemoryBlobUrls = new Map<string, string>();
@@ -232,8 +233,8 @@ export async function preloadMediaList(urls: (string | undefined | null)[]): Pro
 
   console.log(`[MEDIA CACHE] Preload iniciado para ${validUrls.length} mídias.`);
 
-  // Baixa até 3 arquivos concorrentemente para não sobrecarregar a conexão
-  const concurrency = 3;
+  // Baixa 1 arquivo por vez de forma previsível e sequencial para Smart TVs
+  const concurrency = 1;
   for (let i = 0; i < validUrls.length; i += concurrency) {
     const chunk = validUrls.slice(i, i + concurrency);
     await Promise.allSettled(chunk.map((url) => getCachedMediaUrl(url)));
@@ -315,9 +316,9 @@ export async function pruneMediaCache(activeUrls: (string | undefined | null)[])
 }
 
 /**
- * Limpa todo o cache de mídia (útil para testes ou reinicialização manual).
+ * Limpa o cache em memória (RAM) sem apagar o Cache Storage no disco.
  */
-export async function clearAllMediaCache(): Promise<void> {
+export function clearInMemoryMediaCache(): void {
   for (const [, blobUrl] of inMemoryBlobUrls) {
     try {
       URL.revokeObjectURL(blobUrl);
@@ -327,6 +328,13 @@ export async function clearAllMediaCache(): Promise<void> {
   inMemoryBlobs.clear();
   pendingDownloads.clear();
   nonCorsUrls.clear();
+}
+
+/**
+ * Limpa todo o cache de mídia (útil para testes ou reinicialização manual).
+ */
+export async function clearAllMediaCache(): Promise<void> {
+  clearInMemoryMediaCache();
 
   if (isCacheStorageSupported()) {
     try {

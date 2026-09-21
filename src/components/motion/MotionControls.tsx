@@ -3294,6 +3294,28 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
                   </button>
                   <button
                     type="button"
+                    className={config.background?.type === "sunburst" ? "active" : ""}
+                    onClick={() =>
+                      updateBackground({
+                        type: "sunburst" as BackgroundType,
+                        color: config.background?.color || "#FF8C00",
+                        gradientStart: config.background?.gradientStart || "#FFB800",
+                        gradientEnd: config.background?.gradientEnd || "#FF6600",
+                        sunburst: {
+                          primaryColor: config.background?.sunburst?.primaryColor || "#FFB800",
+                          secondaryColor: config.background?.sunburst?.secondaryColor || "#FF6600",
+                          speed: config.background?.sunburst?.speed ?? 60,
+                          raysCount: config.background?.sunburst?.raysCount ?? 24,
+                          scale: config.background?.sunburst?.scale ?? 1.5,
+                          glowPulse: config.background?.sunburst?.glowPulse ?? true,
+                        },
+                      })
+                    }
+                  >
+                    Sunburst
+                  </button>
+                  <button
+                    type="button"
                     className={config.background?.type === "image" ? "active" : ""}
                     onClick={() => updateBackground({ type: "image" as BackgroundType })}
                   >
@@ -3479,6 +3501,180 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
                     </div>
                   )}
                 </div>
+              )}
+
+              {/* Seção Sunburst Animado */}
+              {config.background?.type === "sunburst" && (
+                <>
+                  <div className="control-field">
+                    <span className="control-label-mini">Presets de Cores Sunburst:</span>
+                    <div className="gradient-presets-grid">
+                      {[
+                        { label: "Sol Amarelo & Laranja", primary: "#FFB800", secondary: "#FF6600" },
+                        { label: "Âmbar & Dourado", primary: "#F59E0B", secondary: "#D97706" },
+                        { label: "Laranja & Fogo", primary: "#FF6B00", secondary: "#DC2626" },
+                        { label: "Black Friday & Grafite", primary: "#333333", secondary: "#111111" },
+                        { label: "Azul Ofertas", primary: "#0284C7", secondary: "#0369A1" },
+                      ].map((sp) => (
+                        <button
+                          key={sp.label}
+                          type="button"
+                          className="gradient-preset-btn"
+                          style={{
+                            background: `linear-gradient(135deg, ${sp.primary}, ${sp.secondary})`,
+                          }}
+                          onClick={() =>
+                            updateBackground({
+                              gradientStart: sp.primary,
+                              gradientEnd: sp.secondary,
+                              sunburst: {
+                                ...(config.background?.sunburst || {}),
+                                primaryColor: sp.primary,
+                                secondaryColor: sp.secondary,
+                              },
+                            })
+                          }
+                          title={sp.label}
+                        >
+                          <span>{sp.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="control-field">
+                    <span className="control-label-mini">Cor Primária (Raios Claros):</span>
+                    <div className="color-picker-row">
+                      <input
+                        type="color"
+                        className="color-picker-input"
+                        value={
+                          config.background?.sunburst?.primaryColor ||
+                          config.background?.gradientStart ||
+                          "#FFB800"
+                        }
+                        onChange={(e) =>
+                          updateBackground({
+                            gradientStart: e.target.value,
+                            sunburst: {
+                              ...(config.background?.sunburst || {}),
+                              primaryColor: e.target.value,
+                            },
+                          })
+                        }
+                      />
+                      <span className="color-hex-text">
+                        {config.background?.sunburst?.primaryColor ||
+                          config.background?.gradientStart ||
+                          "#FFB800"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="control-field">
+                    <span className="control-label-mini">Cor Secundária (Raios Escuros):</span>
+                    <div className="color-picker-row">
+                      <input
+                        type="color"
+                        className="color-picker-input"
+                        value={
+                          config.background?.sunburst?.secondaryColor ||
+                          config.background?.gradientEnd ||
+                          "#FF6600"
+                        }
+                        onChange={(e) =>
+                          updateBackground({
+                            gradientEnd: e.target.value,
+                            sunburst: {
+                              ...(config.background?.sunburst || {}),
+                              secondaryColor: e.target.value,
+                            },
+                          })
+                        }
+                      />
+                      <span className="color-hex-text">
+                        {config.background?.sunburst?.secondaryColor ||
+                          config.background?.gradientEnd ||
+                          "#FF6600"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <label>
+                    Velocidade da Rotação: <strong>{config.background?.sunburst?.speed ?? 60}s</strong>
+                    <input
+                      type="range"
+                      min="15"
+                      max="150"
+                      step="5"
+                      value={config.background?.sunburst?.speed ?? 60}
+                      onChange={(e) =>
+                        updateBackground({
+                          sunburst: {
+                            ...(config.background?.sunburst || {}),
+                            speed: Number(e.target.value),
+                          },
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Densidade de Raios: <strong>{config.background?.sunburst?.raysCount ?? 24} raios</strong>
+                    <input
+                      type="range"
+                      min="8"
+                      max="48"
+                      step="4"
+                      value={config.background?.sunburst?.raysCount ?? 24}
+                      onChange={(e) =>
+                        updateBackground({
+                          sunburst: {
+                            ...(config.background?.sunburst || {}),
+                            raysCount: Number(e.target.value),
+                          },
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Escala / Zoom dos Raios: <strong>{(config.background?.sunburst?.scale ?? 1.5).toFixed(1)}x</strong>
+                    <input
+                      type="range"
+                      min="1"
+                      max="2.5"
+                      step="0.1"
+                      value={config.background?.sunburst?.scale ?? 1.5}
+                      onChange={(e) =>
+                        updateBackground({
+                          sunburst: {
+                            ...(config.background?.sunburst || {}),
+                            scale: Number(e.target.value),
+                          },
+                        })
+                      }
+                    />
+                  </label>
+
+                  <div className="control-field" style={{ marginTop: "6px" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={config.background?.sunburst?.glowPulse !== false}
+                        onChange={(e) =>
+                          updateBackground({
+                            sunburst: {
+                              ...(config.background?.sunburst || {}),
+                              glowPulse: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                      <span>Pulso de Brilho Central Suave</span>
+                    </label>
+                  </div>
+                </>
               )}
             </div>
           )}

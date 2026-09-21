@@ -193,6 +193,7 @@ export function TvPlayer({
       ? videoBfImageOverride.visible
       : activeMotion?.visibility?.blackFridayImage !== false &&
         activeMotion?.blackFridayImage?.visible !== false;
+  const isSunburstBg = activeMotion?.background?.type === "sunburst" && !isVideo;
 
   const logoInlineStyle: React.CSSProperties = useMemo(() => {
     if (!effectiveLogoConfig) return {};
@@ -325,6 +326,25 @@ export function TvPlayer({
         styles["--bf-custom-bg"] = grad;
         styles["--theme-screen-background"] = grad;
         styles["--theme-shell-background"] = grad;
+      } else if (activeMotion.background.type === "sunburst") {
+        const sunburst = activeMotion.background.sunburst;
+        const primary = sunburst?.primaryColor || activeMotion.background.gradientStart || "#FFB800";
+        const secondary = sunburst?.secondaryColor || activeMotion.background.gradientEnd || "#FF6600";
+        const speed = sunburst?.speed ?? 60;
+        const scale = sunburst?.scale ?? 1.5;
+        const rays = sunburst?.raysCount ?? 24;
+        const pulse = sunburst?.glowPulse !== false;
+        const rayAngle = 360 / Math.max(4, rays) / 2;
+
+        styles["--sunburst-primary"] = primary;
+        styles["--sunburst-secondary"] = secondary;
+        styles["--sunburst-speed"] = `${speed}s`;
+        styles["--sunburst-scale"] = `${scale}`;
+        styles["--sunburst-ray-deg"] = `${rayAngle.toFixed(2)}deg`;
+        styles["--sunburst-pulse-display"] = pulse ? "block" : "none";
+        styles["--lab-custom-bg"] = primary;
+        styles["--bf-custom-bg"] = primary;
+        styles["--theme-screen-background"] = "transparent";
       }
     }
 
@@ -687,6 +707,7 @@ export function TvPlayer({
           src={item.src}
           title={item.title}
           paused={paused}
+          mode={mode}
           onEnded={advanceNext}
           onError={advanceNext}
         />
@@ -712,6 +733,7 @@ export function TvPlayer({
       <div
         className={`tv-shell ${motionClassNames} ${isNoFrame ? "no-frame" : ""}`}
         data-theme={effectiveTheme.slug}
+        data-background-type={activeMotion?.background?.type || "solid"}
         data-solid-bg={isSolidBg ? "true" : undefined}
         data-animation-intensity={effectiveTheme.tokens.animationIntensity}
         style={{ ...themeStyle, ...motionStyleOverrides }}
@@ -747,6 +769,12 @@ export function TvPlayer({
           </div>
         )}
         <div className="tv-screen">
+          {isSunburstBg && (
+            <div className="tv-sunburst-background" aria-hidden="true">
+              <div className="tv-sunburst-rays" />
+              <div className="tv-sunburst-glow" />
+            </div>
+          )}
           {currentItem ? (
             <div
               key={currentItem.id}
@@ -865,6 +893,7 @@ export function TvPlayer({
       <div
         className={`tv-shell ${motionClassNames} ${isNoFrame ? "no-frame" : ""}`}
         data-theme={effectiveTheme.slug}
+        data-background-type={activeMotion?.background?.type || "solid"}
         data-solid-bg={isSolidBg ? "true" : undefined}
         data-animation-intensity={effectiveTheme.tokens.animationIntensity}
         style={{ ...themeStyle, ...motionStyleOverrides }}
@@ -898,6 +927,12 @@ export function TvPlayer({
           </div>
         )}
         <div className="tv-screen">
+          {isSunburstBg && (
+            <div className="tv-sunburst-background" aria-hidden="true">
+              <div className="tv-sunburst-rays" />
+              <div className="tv-sunburst-glow" />
+            </div>
+          )}
           {currentItem ? (
             <div
               key={currentItem.id}

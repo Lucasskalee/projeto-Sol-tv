@@ -262,7 +262,12 @@ export function cloneMotionConfig(config: MotionConfig): MotionConfig {
       ? { ...config.subtitle }
       : { ...DEFAULT_MOTION_CONFIG.subtitle },
     badge: { ...(config.badge || DEFAULT_MOTION_CONFIG.badge) },
-    background: { ...(config.background || DEFAULT_MOTION_CONFIG.background) },
+    background: config.background
+      ? {
+          ...config.background,
+          sunburst: config.background.sunburst ? { ...config.background.sunburst } : undefined,
+        }
+      : { ...DEFAULT_MOTION_CONFIG.background },
     productCard: { ...(config.productCard || DEFAULT_MOTION_CONFIG.productCard) },
     pricePhysics: { ...(config.pricePhysics || DEFAULT_MOTION_CONFIG.pricePhysics) },
     ambient: { ...(config.ambient || DEFAULT_MOTION_CONFIG.ambient) },
@@ -357,6 +362,7 @@ export function areConfigsEqual(a: MotionConfig, b: MotionConfig): boolean {
   if (a.background?.gradientEnd !== b.background?.gradientEnd) return false;
   if (a.background?.gradientAngle !== b.background?.gradientAngle) return false;
   if (a.background?.imageUrl !== b.background?.imageUrl) return false;
+  if (JSON.stringify(a.background?.sunburst) !== JSON.stringify(b.background?.sunburst)) return false;
 
   // Product Card comparison
   if (a.productCard?.style !== b.productCard?.style) return false;
