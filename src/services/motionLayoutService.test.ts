@@ -6,7 +6,6 @@ import {
   updateLayout,
   duplicateLayout,
   deleteLayout,
-  listPublications,
   getPublicationForSector,
   publishLayoutToSector,
 } from "./motionLayoutService";
@@ -99,20 +98,9 @@ describe("Motion Layout Service — Desacoplamento Estrito (Salvar != Publicar)"
     expect(originalCheck?.config.speed).toBe(source.config.speed);
   });
 
-  it("4. REGRA DE OURO: Salvar um layout NÃO altera a publicação da TV em produção", async () => {
-    // 1. Publica Sol Premium no Açougue
+  it("4. REGRA DE OURO: Salvar um layout NÃO altera o visual publicado em cache", async () => {
     const layouts = await listLayouts();
     const solPremium = layouts.find((l) => l.name.includes("Sol Premium"))!;
-
-    const initialPub = await publishLayoutToSector({
-      sector: "acougue",
-      layoutId: solPremium.id,
-      layoutName: solPremium.name,
-      configToPublish: solPremium.config,
-    });
-
-    expect(initialPub.publishedConfig.themeSlug).toBe(solPremium.config.themeSlug);
-    const pubVersionBefore = initialPub.publishedVersion;
 
     // 2. O usuário abre o Sol Premium e faz alterações drásticas no editor e clica em SALVAR
     const modifiedConfig = {
@@ -135,14 +123,15 @@ describe("Motion Layout Service — Desacoplamento Estrito (Salvar != Publicar)"
     const layoutAfterSave = await getLayoutById(solPremium.id);
     expect(layoutAfterSave?.config.background.color).toBe("#990000");
 
-    // 4. CRÍTICO: A TV em produção AINDA mantém o snapshot publicado original intacto!
+    // 4. A configuração publicada segue sendo o fallback anterior.
     const tvPublication = await getPublicationForSector("acougue");
-    expect(tvPublication.publishedVersion).toBe(pubVersionBefore);
-    expect(tvPublication.publishedConfig.background.color).toBe(solPremium.config.background.color);
+    expect(tvPublication.publishedConfig.background.color).toBe(
+      DEFAULT_MOTION_CONFIG.background.color,
+    );
     expect(tvPublication.publishedConfig.background.color).not.toBe("#990000");
   });
 
-  it("5. Publicação explícita atualiza a TV e cria novo snapshot", async () => {
+  it("5. Publicação sem Supabase falha e não cria um falso snapshot local", async () => {
     const layouts = await listLayouts();
     const layout = layouts[0];
 
@@ -157,18 +146,16 @@ describe("Motion Layout Service — Desacoplamento Estrito (Salvar != Publicar)"
       },
     };
 
-    const pub = await publishLayoutToSector({
-      sector: "acougue",
-      layoutId: layout.id,
-      layoutName: layout.name,
-      configToPublish: newConfig,
-    });
+    await expect(
+      publishLayoutToSector({
+        sector: "acougue",
+        layoutId: layout.id,
+        layoutName: layout.name,
+        configToPublish: newConfig,
+      }),
+    ).rejects.toThrow("A configuração não foi salva no servidor");
 
-    expect(pub.publishedConfig.background.color).toBe("#0055aa");
-    expect(pub.publishedVersion).toBeGreaterThan(1);
-
-    const check = await getPublicationForSector("acougue");
-    expect(check.publishedConfig.background.color).toBe("#0055aa");
+    expect(localStorage.getItem("sol-tv-acougue-visual-config-v2")).toBeNull();
   });
 
   it("6. Impede exclusão de layouts canônicos do sistema", async () => {

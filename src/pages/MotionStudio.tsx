@@ -237,11 +237,8 @@ export default function MotionStudio() {
     if (!currentLayout) return;
     setIsPublishing(true);
     try {
-      // 1. Also ensure the draft is updated in motion_layouts
-      await updateLayout(currentLayout.id, { config: currentConfig });
-      setSavedConfig(cloneMotionConfig(currentConfig));
-
-      // 2. Publish immutable snapshot to the selected sector
+      // Publish directly to the official visual configuration. Saving a layout
+      // draft is a separate operation and must not block the live publication.
       const pub = await publishLayoutToSector({
         sector,
         layoutId: currentLayout.id,
@@ -249,6 +246,7 @@ export default function MotionStudio() {
         configToPublish: currentConfig,
       });
 
+      setSavedConfig(cloneMotionConfig(currentConfig));
       setPublishedVersion(pub.publishedVersion);
       setIsPublishModalOpen(false);
 

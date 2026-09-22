@@ -14,17 +14,16 @@ import type {
   PublishLayoutInput,
 } from "../motion/layoutTypes";
 import {
-  loadCachedVisualConfig,
-  cacheVisualConfig,
+  loadVisualConfig,
+  publishVisualConfig,
+  subscribeToVisualConfig,
   type VisualConfigData,
 } from "../supabase";
 
 const LAYOUTS_STORAGE_KEY = "skalee_motion_layouts_v1";
-const PUBLICATIONS_STORAGE_KEY = "skalee_motion_publications_v1";
 
 // In-memory cache for ultra-fast access
 let memoryLayouts: MotionLayout[] | null = null;
-let memoryPublications: Record<string, MotionPublication> = {};
 
 /**
  * Built-in Initial Layouts Seed
@@ -194,45 +193,6 @@ function loadLocalLayouts(): MotionLayout[] {
 function saveLocalLayouts(layouts: MotionLayout[]): void {
   safeLocalStorageSetItem(LAYOUTS_STORAGE_KEY, JSON.stringify(layouts));
   memoryLayouts = layouts;
-}
-
-/**
- * Loads publications from localStorage
- */
-function loadLocalPublications(): Record<string, MotionPublication> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(PUBLICATIONS_STORAGE_KEY);
-    if (!raw) {
-      // Initialize with Açougue publication from cache if available
-      const cached = loadCachedVisualConfig("acougue");
-      const initialPub: MotionPublication = {
-        id: "pub-acougue-initial",
-        storeId: "default",
-        sector: "acougue",
-        layoutId: "layout-sol-branco-sunburst",
-        layoutName: "Fundo Branco & Sunburst",
-        publishedConfig: cached.publishedConfig || DEFAULT_MOTION_CONFIG,
-        publishedVersion: cached.publishedVersion || 1,
-        publishedAt: cached.publishedAt || new Date().toISOString(),
-        publishedBy: "Sistema",
-      };
-      const initial = { acougue: initialPub };
-      safeLocalStorageSetItem(PUBLICATIONS_STORAGE_KEY, JSON.stringify(initial));
-      return initial;
-    }
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Saves publications to localStorage
- */
-function saveLocalPublications(pubs: Record<string, MotionPublication>): void {
-  safeLocalStorageSetItem(PUBLICATIONS_STORAGE_KEY, JSON.stringify(pubs));
-  memoryPublications = pubs;
 }
 
 // -----------------------------------------------------------------------------
@@ -411,7 +371,7 @@ export async function createLayout(input: CreateLayoutInput): Promise<MotionLayo
 /**
  * Updates / Saves a layout draft.
  * CRITICAL RULE: SALVAR ≠ PUBLICAR.
- * Updating a layout ONLY saves to motion_layouts. It NEVER alters motion_publications or the live TV!
+ * Updating a layout ONLY saves to motion_layouts. It NEVER alters the published visual or the live TV!
  */
 export async function updateLayout(
   id: string,
@@ -517,43 +477,43 @@ export async function deleteLayout(id: string): Promise<boolean> {
 // PUBLICATION SERVICE FUNCTIONS (Explicit Production Publication)
 // -----------------------------------------------------------------------------
 
-/**
- * Lists all active sector publications
- */
+function toMotionPublication(
+  visual: VisualConfigData,
+  details: Partial<MotionPublication> = {},
+): MotionPublication {
+  return {
+    id: `visual-${visual.sector}-${visual.publishedVersion}`,
+    storeId: details.storeId || "default",
+    sector: visual.sector,
+    layoutId: details.layoutId || null,
+    layoutName: details.layoutName || "Visual Publicado",
+    publishedConfig: cloneMotionConfig(visual.publishedConfig),
+    publishedVersion: visual.publishedVersion,
+    publishedAt: visual.publishedAt,
+    publishedBy: details.publishedBy || "admin",
+  };
+}
+
+/** Lists published visuals from the official visual-config table. */
 export async function listPublications(): Promise<Record<string, MotionPublication>> {
-  const local = loadLocalPublications();
-  memoryPublications = local;
+  if (!supabase) return {};
 
-  if (!supabase) return local;
+  const { data, error } = await supabase.from("sol_tv_visual_configs").select("*");
+  if (error) throw error;
 
-  try {
-    const { data, error } = await supabase.from("motion_publications").select("*");
-    if (!error && data && data.length > 0) {
-      const pubs: Record<string, MotionPublication> = {};
-      data.forEach((row: any) => {
-        const sec = (row.sector || "").toLowerCase();
-        if (sec) {
-          pubs[sec] = {
-            id: row.id,
-            storeId: row.store_id || "default",
-            sector: sec,
-            layoutId: row.layout_id || null,
-            layoutName: row.layout_name || "",
-            publishedConfig: cloneMotionConfig(row.published_config || DEFAULT_MOTION_CONFIG),
-            publishedVersion: Number(row.published_version) || 1,
-            publishedAt: row.published_at || new Date().toISOString(),
-            publishedBy: row.published_by || "admin",
-          };
-        }
-      });
-      saveLocalPublications(pubs);
-      return pubs;
-    }
-  } catch (err) {
-    console.warn("[MotionPublications] Falha ao listar publicações do Supabase:", err);
-  }
-
-  return local;
+  return (data || []).reduce<Record<string, MotionPublication>>((publications, row) => {
+    const sector = String(row.sector || "").toLowerCase();
+    if (!sector || !row.published_config) return publications;
+    publications[sector] = toMotionPublication({
+      sector,
+      draftConfig: cloneMotionConfig(row.draft_config || row.published_config),
+      publishedConfig: cloneMotionConfig(row.published_config),
+      publishedVersion: Number(row.published_version) || 1,
+      publishedAt: row.published_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.published_at || new Date().toISOString(),
+    });
+    return publications;
+  }, {});
 }
 
 /**
@@ -563,26 +523,7 @@ export async function getPublicationForSector(
   sector: string
 ): Promise<MotionPublication> {
   const normalizedSector = sector.toLowerCase();
-  const pubs = await listPublications();
-  if (pubs[normalizedSector]) {
-    return pubs[normalizedSector];
-  }
-
-  // Fallback to legacy sol_tv_visual_configs
-  const cachedVisual = loadCachedVisualConfig(normalizedSector);
-  const fallbackPub: MotionPublication = {
-    id: `pub-${normalizedSector}-legacy`,
-    storeId: "default",
-    sector: normalizedSector,
-    layoutId: null,
-    layoutName: "Visual Atual",
-    publishedConfig: cachedVisual.publishedConfig || DEFAULT_MOTION_CONFIG,
-    publishedVersion: cachedVisual.publishedVersion || 1,
-    publishedAt: cachedVisual.publishedAt || new Date().toISOString(),
-    publishedBy: "Sistema",
-  };
-
-  return fallbackPub;
+  return toMotionPublication(await loadVisualConfig(normalizedSector));
 }
 
 /**
@@ -593,77 +534,8 @@ export async function publishLayoutToSector(
   input: PublishLayoutInput
 ): Promise<MotionPublication> {
   const normalizedSector = input.sector.toLowerCase();
-  const currentPub = await getPublicationForSector(normalizedSector);
-  const nextVersion = (currentPub.publishedVersion || 0) + 1;
-  const now = new Date().toISOString();
-  const sanitized = sanitizeMotionConfigForStorage(input.configToPublish);
-
-  const publication: MotionPublication = {
-    id: `pub-${normalizedSector}-${Date.now()}`,
-    storeId: input.storeId || "default",
-    sector: normalizedSector,
-    layoutId: input.layoutId || null,
-    layoutName: input.layoutName || "Layout Publicado",
-    publishedConfig: cloneMotionConfig(sanitized),
-    publishedVersion: nextVersion,
-    publishedAt: now,
-    publishedBy: input.publishedBy || "admin",
-  };
-
-  // Update local memory and cache
-  const allPubs = loadLocalPublications();
-  allPubs[normalizedSector] = publication;
-  saveLocalPublications(allPubs);
-
-  // Sync to legacy sol_tv_visual_configs for backward compatibility
-  const legacyData: VisualConfigData = {
-    sector: normalizedSector,
-    draftConfig: cloneMotionConfig(sanitized),
-    publishedConfig: cloneMotionConfig(sanitized),
-    publishedVersion: nextVersion,
-    publishedAt: now,
-    updatedAt: now,
-  };
-  cacheVisualConfig(normalizedSector, legacyData);
-
-  // Broadcast custom event for any live preview listeners
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent("skalee_motion_publication_changed", {
-        detail: { sector: normalizedSector, publication },
-      })
-    );
-  }
-
-  if (supabase) {
-    try {
-      // 1. Write to motion_publications
-      await supabase.from("motion_publications").upsert({
-        store_id: publication.storeId,
-        sector: normalizedSector,
-        layout_id: publication.layoutId,
-        layout_name: publication.layoutName,
-        published_config: sanitized,
-        published_version: nextVersion,
-        published_at: now,
-        published_by: publication.publishedBy,
-      });
-
-      // 2. Write to sol_tv_visual_configs (backward compatibility)
-      await supabase.from("sol_tv_visual_configs").upsert({
-        sector: normalizedSector,
-        draft_config: sanitized,
-        published_config: sanitized,
-        published_version: nextVersion,
-        published_at: now,
-        updated_at: now,
-      });
-    } catch (err) {
-      console.warn("[MotionPublications] Erro ao gravar publicação no Supabase:", err);
-    }
-  }
-
-  return publication;
+  const visual = await publishVisualConfig(normalizedSector, input.configToPublish);
+  return toMotionPublication(visual, input);
 }
 
 /**
@@ -676,83 +548,7 @@ export function subscribeToSectorPublication(
 ): () => void {
   const normalizedSector = sector.toLowerCase();
 
-  // 1. Local window event listener (for same-window / local tests)
-  const handleLocalEvent = (e: Event) => {
-    const custom = e as CustomEvent<{ sector: string; publication: MotionPublication }>;
-    if (custom.detail?.sector === normalizedSector && custom.detail.publication) {
-      onUpdate(custom.detail.publication);
-    }
-  };
-
-  if (typeof window !== "undefined") {
-    window.addEventListener("skalee_motion_publication_changed", handleLocalEvent);
-  }
-
-  // 2. Supabase Realtime channel for motion_publications & sol_tv_visual_configs
-  let channel: any = null;
-  if (supabase) {
-    const channelName = `pub-realtime-${normalizedSector}-${Math.random().toString(36).slice(2, 7)}`;
-    channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "motion_publications",
-        },
-        (payload: any) => {
-          const rec = payload.new;
-          if (rec && rec.sector && rec.sector.toLowerCase() === normalizedSector) {
-            const pub: MotionPublication = {
-              id: rec.id || `pub-${normalizedSector}`,
-              storeId: rec.store_id || "default",
-              sector: normalizedSector,
-              layoutId: rec.layout_id || null,
-              layoutName: rec.layout_name || "",
-              publishedConfig: cloneMotionConfig(rec.published_config || DEFAULT_MOTION_CONFIG),
-              publishedVersion: Number(rec.published_version) || 1,
-              publishedAt: rec.published_at || new Date().toISOString(),
-              publishedBy: rec.published_by || "admin",
-            };
-            onUpdate(pub);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "sol_tv_visual_configs",
-        },
-        (payload: any) => {
-          const rec = payload.new;
-          if (rec && rec.sector && rec.sector.toLowerCase() === normalizedSector && rec.published_config) {
-            const pub: MotionPublication = {
-              id: `pub-${normalizedSector}-${rec.published_version}`,
-              storeId: "default",
-              sector: normalizedSector,
-              layoutId: null,
-              layoutName: "Visual Publicado",
-              publishedConfig: cloneMotionConfig(rec.published_config),
-              publishedVersion: Number(rec.published_version) || 1,
-              publishedAt: rec.published_at || new Date().toISOString(),
-              publishedBy: "admin",
-            };
-            onUpdate(pub);
-          }
-        }
-      )
-      .subscribe();
-  }
-
-  return () => {
-    if (typeof window !== "undefined") {
-      window.removeEventListener("skalee_motion_publication_changed", handleLocalEvent);
-    }
-    if (channel && supabase) {
-      void supabase.removeChannel(channel);
-    }
-  };
+  return subscribeToVisualConfig(normalizedSector, (visual) => {
+    onUpdate(toMotionPublication(visual));
+  });
 }

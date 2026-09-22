@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
   cachedContent,
@@ -7,6 +7,10 @@ import {
   loadTvContent,
   subscribeToTvContent,
   loadCachedVisualConfig,
+  isVisualConfigNewer,
+  loadVisualConfig,
+  subscribeToVisualConfig,
+  type VisualConfigData,
 } from "../supabase";
 import type { TvContent } from "../types";
 import { TvPlayer } from "../components/TvPlayer";
@@ -17,10 +21,6 @@ import {
 } from "../themes/resolveTheme";
 import type { ThemeDefinition } from "../themes/types";
 import type { MotionConfig } from "../motion/types";
-import {
-  getPublicationForSector,
-  subscribeToSectorPublication,
-} from "../services/motionLayoutService";
 
 export default function Tv() {
   const { sector: routeSector } = useParams<{ sector?: string }>();
@@ -36,6 +36,7 @@ export default function Tv() {
     const cachedVisual = loadCachedVisualConfig(activeSector);
     return cachedVisual.publishedConfig;
   });
+  const visualConfigRef = useRef<VisualConfigData>(loadCachedVisualConfig(activeSector));
   const [connection, setConnection] = useState<"online" | "syncing" | "offline">(
     databaseConfigured ? "syncing" : "offline",
   );
@@ -46,6 +47,10 @@ export default function Tv() {
 
     // 1. Initial published snapshot loading
     const cachedVisual = loadCachedVisualConfig(activeSector);
+    visualConfigRef.current = cachedVisual;
+    if (import.meta.env.DEV) {
+      console.log(`[MOTION] Cache carregado: version ${cachedVisual.publishedVersion}`);
+    }
     if (cachedVisual.publishedConfig) {
       setMotionConfig(cachedVisual.publishedConfig);
       if (!queryTheme && cachedVisual.publishedConfig.themeSlug) {
@@ -55,15 +60,37 @@ export default function Tv() {
       setTheme(resolveTheme(queryTheme || getSectorThemeSlug(activeSector)));
     }
 
-    // Load active published snapshot from publication service
-    void getPublicationForSector(activeSector).then((pub) => {
-      if (pub.publishedConfig) {
-        setMotionConfig(pub.publishedConfig);
-        if (!queryTheme && pub.publishedConfig.themeSlug) {
-          setTheme(resolveTheme(pub.publishedConfig.themeSlug));
-        }
+    const applyVisualConfig = (visual: VisualConfigData, force = false) => {
+      if (!force && !isVisualConfigNewer(visual, visualConfigRef.current)) return;
+
+      visualConfigRef.current = visual;
+      setMotionConfig(visual.publishedConfig);
+      if (!queryTheme && visual.publishedConfig.themeSlug) {
+        setTheme(resolveTheme(visual.publishedConfig.themeSlug));
       }
+    };
+
+    // Server configuration always wins over the local fallback on initial load.
+    void loadVisualConfig(activeSector).then((visual) => {
+      if (import.meta.env.DEV) {
+        console.log(`[MOTION] Servidor carregado: version ${visual.publishedVersion}`);
+        console.log(`[MOTION] Aplicando servidor: version ${visual.publishedVersion}`);
+      }
+      applyVisualConfig(visual, true);
     });
+
+    const unsubscribeVisual = subscribeToVisualConfig(
+      activeSector,
+      (visual) => {
+        if (isVisualConfigNewer(visual, visualConfigRef.current)) {
+          if (import.meta.env.DEV) {
+            console.log(`[MOTION] Nova publicação recebida: version ${visual.publishedVersion}`);
+          }
+          applyVisualConfig(visual);
+        }
+      },
+      setConnection,
+    );
 
     // 2. Realtime Theme subscription
     const unsubscribeTheme = subscribeToSectorTheme(activeSector, (newTheme) => {
@@ -74,23 +101,10 @@ export default function Tv() {
       if (!queryTheme) setTheme(resolveTheme(slug));
     });
 
-    // 3. Realtime Publication Subscription (Listens ONLY to explicit publications!)
-    const unsubscribePublication = subscribeToSectorPublication(activeSector, (pub) => {
-      if (pub.publishedConfig) {
-        console.log(
-          `[TV Publication Realtime] Publicação recebida para ${activeSector} (v${pub.publishedVersion} - ${pub.layoutName})`
-        );
-        setMotionConfig(pub.publishedConfig);
-        if (!queryTheme && pub.publishedConfig.themeSlug) {
-          setTheme(resolveTheme(pub.publishedConfig.themeSlug));
-        }
-      }
-    });
-
     if (!databaseConfigured) {
       return () => {
         unsubscribeTheme();
-        unsubscribePublication();
+        unsubscribeVisual();
       };
     }
 
@@ -119,7 +133,7 @@ export default function Tv() {
     return () => {
       unsubscribeTheme();
       unsubscribeContent();
-      unsubscribePublication();
+      unsubscribeVisual();
     };
   }, [activeSector, queryTheme]);
 
