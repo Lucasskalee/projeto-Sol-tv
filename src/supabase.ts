@@ -810,6 +810,17 @@ function cacheVisualConfigKey(sector = "acougue") {
   return `sol-tv-${sector.toLowerCase()}-visual-config-v2`;
 }
 
+export function isVisualConfigNewer(
+  candidate: VisualConfigData,
+  current: VisualConfigData | null | undefined,
+): boolean {
+  if (!current) return true;
+  if (candidate.publishedVersion !== current.publishedVersion) {
+    return candidate.publishedVersion > current.publishedVersion;
+  }
+  return Date.parse(candidate.updatedAt) > Date.parse(current.updatedAt);
+}
+
 export function cacheVisualConfig(sector: string, data: VisualConfigData) {
   try {
     const sanitizedData: VisualConfigData = {
@@ -955,28 +966,23 @@ export async function publishVisualConfig(
   configToPublish: MotionConfig,
 ): Promise<VisualConfigData> {
   const normalizedSector = sector.toLowerCase();
-  const current = await loadVisualConfig(normalizedSector);
-  const nextVersion = (current.publishedVersion || 0) + 1;
-  const now = new Date().toISOString();
-  const sanitizedConfig = sanitizeMotionConfigForStorage(configToPublish);
-
-  const publishedData: VisualConfigData = {
-    sector: normalizedSector,
-    draftConfig: cloneMotionConfig(sanitizedConfig),
-    publishedConfig: cloneMotionConfig(sanitizedConfig),
-    publishedVersion: nextVersion,
-    publishedAt: now,
-    updatedAt: now,
-  };
-
-  cacheVisualConfig(normalizedSector, publishedData);
-
-  // Sync sector theme slug in themes table as well
-  if (configToPublish.themeSlug) {
-    void upsertSectorTheme(normalizedSector, configToPublish.themeSlug).catch(() => {});
+  if (!supabase) {
+    throw new Error("Supabase não configurado. A configuração não foi salva no servidor.");
   }
 
-  if (!supabase) return publishedData;
+  const { data: currentRow, error: currentError } = await supabase
+    .from("sol_tv_visual_configs")
+    .select("published_version, published_at")
+    .eq("sector", normalizedSector)
+    .maybeSingle();
+
+  if (currentError) throw currentError;
+
+  const currentVersion = Number(currentRow?.published_version) || 0;
+  const currentPublishedAt = currentRow?.published_at || new Date().toISOString();
+  const nextVersion = currentVersion + 1;
+  const now = new Date().toISOString();
+  const sanitizedConfig = sanitizeMotionConfigForStorage(configToPublish);
 
   const payload = {
     sector: normalizedSector,
@@ -987,14 +993,18 @@ export async function publishVisualConfig(
     updated_at: now,
   };
 
-  console.log(`[SOL TV Visual] Publicando versão v${nextVersion} para o setor ${normalizedSector}:`, payload);
+  if (import.meta.env.DEV) {
+    console.log(`[MOTION] Publicando versão ${nextVersion} para ${normalizedSector}`);
+  }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("sol_tv_visual_configs")
-    .upsert(payload);
+    .upsert(payload)
+    .select()
+    .single();
 
   if (error) {
-    console.error("[SOL TV Visual] Erro ao publicar configuração no Supabase:", error);
+    console.error("[MOTION] Falha ao publicar:", error);
     if (error.code === "42P01" || error.code === "PGRST205") {
       console.warn("[SOL TV Visual] Execute database/sol_tv_visual_configs.sql no SQL Editor do Supabase.");
       throw new Error(
@@ -1004,7 +1014,24 @@ export async function publishVisualConfig(
     throw error;
   }
 
-  console.log(`[SOL TV Visual] Versão v${nextVersion} publicada com sucesso no Supabase!`);
+  const publishedData: VisualConfigData = {
+    sector: normalizedSector,
+    draftConfig: cloneMotionConfig(data.draft_config || data.published_config || sanitizedConfig),
+    publishedConfig: cloneMotionConfig(data.published_config || sanitizedConfig),
+    publishedVersion: Number(data.published_version) || nextVersion,
+    publishedAt: data.published_at || currentPublishedAt,
+    updatedAt: data.updated_at || now,
+  };
+
+  cacheVisualConfig(normalizedSector, publishedData);
+
+  if (configToPublish.themeSlug) {
+    void upsertSectorTheme(normalizedSector, configToPublish.themeSlug).catch(() => {});
+  }
+
+  if (import.meta.env.DEV) {
+    console.log("[MOTION] Publicação confirmada pelo Supabase");
+  }
   return publishedData;
 }
 
@@ -1039,7 +1066,9 @@ export function subscribeToVisualConfig(
         table: "sol_tv_visual_configs",
       },
       (payload) => {
-        console.log(`[SOL TV Realtime Visual] Alteração em sol_tv_visual_configs:`, payload);
+        if (import.meta.env.DEV) {
+          console.log("[MOTION] Nova publicação recebida:", payload);
+        }
         const newRecord = payload.new as {
           sector?: string;
           draft_config?: MotionConfig;
@@ -1062,8 +1091,11 @@ export function subscribeToVisualConfig(
             publishedAt: newRecord.published_at || new Date().toISOString(),
             updatedAt: newRecord.updated_at || new Date().toISOString(),
           };
-          cacheVisualConfig(normalizedSector, updated);
-          onVisualUpdate(updated);
+          const cached = loadCachedVisualConfig(normalizedSector);
+          if (isVisualConfigNewer(updated, cached)) {
+            cacheVisualConfig(normalizedSector, updated);
+            onVisualUpdate(updated);
+          }
         } else {
           void handleReload();
         }
@@ -1071,6 +1103,9 @@ export function subscribeToVisualConfig(
     )
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
+        if (import.meta.env.DEV) {
+          console.log("[MOTION] Realtime conectado");
+        }
         onStatus?.("online");
         void handleReload();
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
