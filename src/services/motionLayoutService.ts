@@ -15,6 +15,7 @@ import type {
 } from "../motion/layoutTypes";
 import {
   loadCachedVisualConfig,
+  loadVisualConfig,
   cacheVisualConfig,
   type VisualConfigData,
 } from "../supabase";
@@ -25,6 +26,30 @@ const PUBLICATIONS_STORAGE_KEY = "skalee_motion_publications_v1";
 // In-memory cache for ultra-fast access
 let memoryLayouts: MotionLayout[] | null = null;
 let memoryPublications: Record<string, MotionPublication> = {};
+
+type SupabaseOperationError = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+};
+
+export function assertMotionPublicationOperation(
+  error: SupabaseOperationError | null | undefined,
+  operation: string
+): void {
+  if (!error) return;
+
+  if (error.code === "42P01" || error.code === "PGRST205") {
+    throw new Error(
+      `Não foi possível ${operation}: a tabela motion_publications não está disponível no Supabase. ` +
+        "Aplique database/motion_layouts_and_publications.sql no projeto conectado à TV."
+    );
+  }
+
+  const detail = error.hint || error.details || error.message || "erro desconhecido";
+  throw new Error(`Não foi possível ${operation} no Supabase: ${detail}`);
+}
 
 /**
  * Built-in Initial Layouts Seed
@@ -528,6 +553,7 @@ export async function listPublications(): Promise<Record<string, MotionPublicati
 
   try {
     const { data, error } = await supabase.from("motion_publications").select("*");
+    assertMotionPublicationOperation(error, "carregar as publicações");
     if (!error && data && data.length > 0) {
       const pubs: Record<string, MotionPublication> = {};
       data.forEach((row: any) => {
@@ -568,17 +594,20 @@ export async function getPublicationForSector(
     return pubs[normalizedSector];
   }
 
-  // Fallback to legacy sol_tv_visual_configs
-  const cachedVisual = loadCachedVisualConfig(normalizedSector);
+  // Fallback remoto para instalações que ainda usam sol_tv_visual_configs.
+  // Isso evita que um dispositivo novo fique preso ao próprio cache local.
+  const remoteVisual = supabase
+    ? await loadVisualConfig(normalizedSector)
+    : loadCachedVisualConfig(normalizedSector);
   const fallbackPub: MotionPublication = {
     id: `pub-${normalizedSector}-legacy`,
     storeId: "default",
     sector: normalizedSector,
     layoutId: null,
     layoutName: "Visual Atual",
-    publishedConfig: cachedVisual.publishedConfig || DEFAULT_MOTION_CONFIG,
-    publishedVersion: cachedVisual.publishedVersion || 1,
-    publishedAt: cachedVisual.publishedAt || new Date().toISOString(),
+    publishedConfig: remoteVisual.publishedConfig || DEFAULT_MOTION_CONFIG,
+    publishedVersion: remoteVisual.publishedVersion || 1,
+    publishedAt: remoteVisual.publishedAt || new Date().toISOString(),
     publishedBy: "Sistema",
   };
 
@@ -610,12 +639,7 @@ export async function publishLayoutToSector(
     publishedBy: input.publishedBy || "admin",
   };
 
-  // Update local memory and cache
-  const allPubs = loadLocalPublications();
-  allPubs[normalizedSector] = publication;
-  saveLocalPublications(allPubs);
-
-  // Sync to legacy sol_tv_visual_configs for backward compatibility
+  // Prepare legacy snapshot, but only cache it after the remote publication succeeds.
   const legacyData: VisualConfigData = {
     sector: normalizedSector,
     draftConfig: cloneMotionConfig(sanitized),
@@ -624,21 +648,11 @@ export async function publishLayoutToSector(
     publishedAt: now,
     updatedAt: now,
   };
-  cacheVisualConfig(normalizedSector, legacyData);
-
-  // Broadcast custom event for any live preview listeners
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent("skalee_motion_publication_changed", {
-        detail: { sector: normalizedSector, publication },
-      })
-    );
-  }
-
   if (supabase) {
-    try {
-      // 1. Write to motion_publications
-      await supabase.from("motion_publications").upsert({
+    // 1. motion_publications is the source of truth. Supabase calls return
+    // { error } instead of throwing, so the result must be checked explicitly.
+    const { error: publicationError } = await supabase.from("motion_publications").upsert(
+      {
         store_id: publication.storeId,
         sector: normalizedSector,
         layout_id: publication.layoutId,
@@ -647,10 +661,13 @@ export async function publishLayoutToSector(
         published_version: nextVersion,
         published_at: now,
         published_by: publication.publishedBy,
-      });
+      },
+      { onConflict: "store_id,sector" }
+    );
+    assertMotionPublicationOperation(publicationError, "publicar o layout");
 
-      // 2. Write to sol_tv_visual_configs (backward compatibility)
-      await supabase.from("sol_tv_visual_configs").upsert({
+    // 2. Keep the legacy table synchronized while older TVs are still active.
+    const { error: legacyError } = await supabase.from("sol_tv_visual_configs").upsert({
         sector: normalizedSector,
         draft_config: sanitized,
         published_config: sanitized,
@@ -658,9 +675,24 @@ export async function publishLayoutToSector(
         published_at: now,
         updated_at: now,
       });
-    } catch (err) {
-      console.warn("[MotionPublications] Erro ao gravar publicação no Supabase:", err);
+    if (legacyError) {
+      const detail = legacyError.hint || legacyError.details || legacyError.message;
+      console.warn("[MotionPublications] Publicação principal salva, mas a compatibilidade falhou:", detail);
     }
+  }
+
+  // Cache and notify only after the source-of-truth write is confirmed.
+  const allPubs = loadLocalPublications();
+  allPubs[normalizedSector] = publication;
+  saveLocalPublications(allPubs);
+  cacheVisualConfig(normalizedSector, legacyData);
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("skalee_motion_publication_changed", {
+        detail: { sector: normalizedSector, publication },
+      })
+    );
   }
 
   return publication;

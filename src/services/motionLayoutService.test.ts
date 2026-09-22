@@ -1,4 +1,23 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+vi.mock("../supabase", async () => {
+  const { DEFAULT_MOTION_CONFIG, cloneMotionConfig } = await import("../motion/defaults");
+  const visual = (sector: string) => ({
+    sector,
+    draftConfig: cloneMotionConfig(DEFAULT_MOTION_CONFIG),
+    publishedConfig: cloneMotionConfig(DEFAULT_MOTION_CONFIG),
+    publishedVersion: 1,
+    publishedAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+  });
+
+  return {
+    supabase: null,
+    loadCachedVisualConfig: visual,
+    loadVisualConfig: async (sector: string) => visual(sector),
+    cacheVisualConfig: vi.fn(),
+  };
+});
 import {
   listLayouts,
   getLayoutById,
@@ -9,6 +28,7 @@ import {
   listPublications,
   getPublicationForSector,
   publishLayoutToSector,
+  assertMotionPublicationOperation,
 } from "./motionLayoutService";
 import { DEFAULT_MOTION_CONFIG } from "../motion/defaults";
 
@@ -178,5 +198,25 @@ describe("Motion Layout Service — Desacoplamento Estrito (Salvar != Publicar)"
     await expect(deleteLayout(systemLayout.id)).rejects.toThrow(
       "Layouts canônicos do sistema não podem ser excluídos."
     );
+  });
+});
+
+describe("Motion Layout Service — confirmação real do Supabase", () => {
+  it("não aceita erro retornado pelo upsert como publicação bem-sucedida", () => {
+    expect(() =>
+      assertMotionPublicationOperation(
+        { code: "42501", message: "permission denied", hint: "grant insert" },
+        "publicar o layout"
+      )
+    ).toThrow("grant insert");
+  });
+
+  it("explica como corrigir quando motion_publications não existe na Data API", () => {
+    expect(() =>
+      assertMotionPublicationOperation(
+        { code: "PGRST205", message: "table not found" },
+        "publicar o layout"
+      )
+    ).toThrow("database/motion_layouts_and_publications.sql");
   });
 });
