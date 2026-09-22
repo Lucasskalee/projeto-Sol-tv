@@ -113,17 +113,17 @@ export function OfferPrice({
 
   return (
     <div className="price">
-      <span className="currency">R$</span>
-      <span className="value">
+      <span className="currency" style={{ color: "var(--bf-custom-currency-color, var(--theme-price-currency-color, inherit))" }}>R$</span>
+      <span className="value" style={{ color: "var(--bf-custom-price-color, var(--theme-price-color, var(--accent)))" }}>
         <span className="price-integer">{integerPart}</span>
         {centsPart ? (
           <>
             <span className="price-comma">,</span>
-            <span className="price-cents">{centsPart}</span>
+            <span className="price-cents" style={{ color: "var(--bf-custom-cents-color, var(--theme-price-cents-color, inherit))" }}>{centsPart}</span>
           </>
         ) : null}
       </span>
-      {showUnit && offer.unit ? <span className="unit">/{offer.unit}</span> : null}
+      {showUnit && offer.unit ? <span className="unit" style={{ color: "var(--bf-custom-unit-color, var(--theme-price-unit-color, #f1f1f1))" }}>/{offer.unit}</span> : null}
     </div>
   );
 }
@@ -195,9 +195,23 @@ export function OfferProduct({
       style={{ animationDelay, ...imageCustomStyle }}
     >
       <div className="slide-copy">
-        {showProductName && <h3 className="product-name">{offer.name}</h3>}
+        {showProductName && (
+          <h3
+            className="product-name"
+            style={{
+              color: "var(--bf-custom-name-color, var(--theme-product-name-color, var(--color-product-name, var(--theme-text, #111111))))",
+            }}
+          >
+            {offer.name}
+          </h3>
+        )}
         {showOldPrice && offer.regularPrice ? (
-          <div className="old-price offer-secondary">
+          <div
+            className="old-price offer-secondary"
+            style={{
+              color: "var(--bf-custom-oldprice-color, var(--theme-oldprice-color, var(--color-old-price, #b6bdc7)))",
+            }}
+          >
             De <span>R$ {offer.regularPrice}</span>
           </div>
         ) : null}

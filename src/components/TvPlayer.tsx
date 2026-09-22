@@ -64,16 +64,16 @@ export function TvPlayer({
   const paintRevealTimerRef = useRef<number | null>(null);
   const shell = useRef<HTMLDivElement>(null);
 
-  // Resolve motion configuration (from props or local persistence)
+  // Resolve motion configuration (from props or local persistence for preview only)
   const activeMotion = useMemo(() => {
     if (motionConfig) return motionConfig;
-    if (typeof window !== "undefined") {
+    if (mode === "preview" && typeof window !== "undefined") {
       try {
         return loadActiveMotionConfig();
       } catch {}
     }
     return null;
-  }, [motionConfig]);
+  }, [motionConfig, mode]);
 
   // Resolve cached background image
   const rawBgImageUrl = activeMotion?.background?.imageUrl;
@@ -269,10 +269,12 @@ export function TvPlayer({
       if (co.productName) {
         styles["--bf-custom-name-color"] = co.productName;
         styles["--theme-product-name-color"] = co.productName;
+        styles["--color-product-name"] = co.productName;
       }
       if (co.price) {
         styles["--bf-custom-price-color"] = co.price;
         styles["--theme-price-color"] = co.price;
+        styles["--color-product-price"] = co.price;
       }
       if (co.priceCents) {
         styles["--bf-custom-cents-color"] = co.priceCents;
@@ -307,7 +309,9 @@ export function TvPlayer({
       if (co.fontWeightName) styles["--theme-product-name-weight"] = String(co.fontWeightName);
       if (co.fontWeightPrice) styles["--theme-price-weight"] = String(co.fontWeightPrice);
       if (co.priceShadow !== undefined) styles["--theme-price-shadow"] = co.priceShadow;
-    } else if (activeMotion.background) {
+    }
+
+    if (activeMotion.background) {
       // General background override (Solid, Gradient, Image)
       if (activeMotion.background.type === "image" && effectiveBgImageUrl) {
         const bgImg = `url(${effectiveBgImageUrl})`;
@@ -316,10 +320,13 @@ export function TvPlayer({
         styles["--bf-custom-bg"] = `${bgImg} center/cover no-repeat`;
         styles["--theme-screen-background"] = `${bgImg} center/cover no-repeat`;
       } else if (activeMotion.background.type === "solid" && activeMotion.background.color) {
-        styles["--lab-custom-bg"] = activeMotion.background.color;
-        styles["--bf-custom-bg"] = activeMotion.background.color;
-        styles["--theme-screen-background"] = activeMotion.background.color;
-        styles["--theme-shell-background"] = activeMotion.background.color;
+        const solidBg = activeMotion.colorOverrides?.enabled && activeMotion.colorOverrides.background
+          ? activeMotion.colorOverrides.background
+          : activeMotion.background.color;
+        styles["--lab-custom-bg"] = solidBg;
+        styles["--bf-custom-bg"] = solidBg;
+        styles["--theme-screen-background"] = solidBg;
+        styles["--theme-shell-background"] = solidBg;
       } else if (activeMotion.background.type === "gradient") {
         const grad = `linear-gradient(${activeMotion.background.gradientAngle || 135}deg, ${activeMotion.background.gradientStart || "#1a0407"}, ${activeMotion.background.gradientEnd || "#050608"})`;
         styles["--lab-custom-bg"] = grad;
@@ -369,6 +376,7 @@ export function TvPlayer({
           if (tuning.productName.fontSizeOffset !== undefined) styles["--layout-name-size"] = `${tuning.productName.fontSizeOffset}px`;
           if (tuning.productName.x !== undefined) styles["--layout-name-x"] = `${tuning.productName.x}px`;
           if (tuning.productName.y !== undefined) styles["--layout-name-y"] = `${tuning.productName.y}px`;
+          if (tuning.productName.maxLines !== undefined) styles["--layout-name-lines"] = `${tuning.productName.maxLines}`;
         }
         if (tuning.promotionalPrice) {
           if (tuning.promotionalPrice.fontSizeOffset !== undefined) styles["--layout-price-size"] = `${tuning.promotionalPrice.fontSizeOffset}px`;

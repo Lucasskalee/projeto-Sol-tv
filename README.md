@@ -1,5 +1,11 @@
 # projeto-Sol-tv Lucas skalee
 
+## Fluxo de contribuicao e deploy
+
+Toda correcao, melhoria ou nova funcao deve comecar por uma Issue no GitHub e ser entregue por uma branch e um Pull Request dedicados. A descricao do PR deve mencionar e fechar a Issue correspondente, por exemplo, `Closes #123`. O deploy de preview deve ser validado no PR; o deploy de producao deve ocorrer pelo merge do PR na branch padrao.
+
+As regras completas e obrigatorias para pessoas e agentes estao em [AGENTS.md](AGENTS.md).
+
 ## Aplicação Sol TV
 
 Interface React baseada em `sol-tv-prototipo.html`, com painel escuro, playlist e prévia 16:9.

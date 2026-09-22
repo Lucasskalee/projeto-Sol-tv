@@ -1,3 +1,4 @@
+import type { MotionCategory } from "./MotionCategoryBar";
 import { useState, useRef } from "react";
 import {
   ChevronDown,
@@ -71,6 +72,10 @@ export type MotionControlsProps = {
   onChange: (updater: (prev: MotionConfig) => MotionConfig) => void;
   onReplay: () => void;
   sector?: string;
+  activeCategory?: MotionCategory;
+  onSelectCategory?: (category: MotionCategory) => void;
+  activeLayoutTuningTab?: "image" | "name" | "price" | "oldPrice" | "columns";
+  onSelectLayoutTuningTab?: (tab: "image" | "name" | "price" | "oldPrice" | "columns") => void;
 };
 
 const AVAILABLE_THEMES = Object.values(themeRegistry);
@@ -137,7 +142,16 @@ const GRADIENT_PRESETS = [
   },
 ];
 
-export function MotionControls({ config, onChange, onReplay, sector = "acougue" }: MotionControlsProps) {
+export function MotionControls({
+  config,
+  onChange,
+  onReplay,
+  sector = "acougue",
+  activeCategory,
+  onSelectCategory,
+  activeLayoutTuningTab: externalLayoutTuningTab,
+  onSelectLayoutTuningTab,
+}: MotionControlsProps) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     layoutTuning: true,
     visibility: true,
@@ -158,9 +172,14 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
     theme: false,
   });
 
-  const [activeLayoutTuningTab, setActiveLayoutTuningTab] = useState<
+  const [localLayoutTuningTab, setLocalLayoutTuningTab] = useState<
     "image" | "name" | "price" | "oldPrice" | "columns"
   >("image");
+  const activeLayoutTuningTab = externalLayoutTuningTab ?? localLayoutTuningTab;
+  const setActiveLayoutTuningTab = (tab: "image" | "name" | "price" | "oldPrice" | "columns") => {
+    setLocalLayoutTuningTab(tab);
+    onSelectLayoutTuningTab?.(tab);
+  };
   const [activeBfImageTab, setActiveBfImageTab] = useState<
     "content" | "style" | "animation"
   >("content");
@@ -419,6 +438,9 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
     onChange((prev) => ({
       ...prev,
       background: { ...prev.background, ...patch },
+      colorOverrides: patch.color
+        ? { ...prev.colorOverrides, background: patch.color }
+        : prev.colorOverrides,
     }));
   };
 
@@ -433,6 +455,14 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
     onChange((prev) => ({
       ...prev,
       badge: { ...prev.badge, ...patch },
+      ...(patch.visible !== undefined
+        ? {
+            visibility: {
+              ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+              badge: patch.visible,
+            },
+          }
+        : {}),
     }));
   };
 
@@ -451,6 +481,14 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
         ...(prev.subtitle || DEFAULT_MOTION_CONFIG.subtitle || { text: "Qualidade para o seu dia.", fontSize: 22, visible: true }),
         ...patch,
       },
+      ...(patch.visible !== undefined
+        ? {
+            visibility: {
+              ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+              slogan: patch.visible,
+            },
+          }
+        : {}),
     }));
   };
 
@@ -490,6 +528,64 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
         ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
         ...patch,
       },
+      ...(patch.badge !== undefined
+        ? {
+            badge: {
+              ...prev.badge,
+              visible: patch.badge,
+            },
+          }
+        : {}),
+      ...(patch.slogan !== undefined
+        ? {
+            subtitle: {
+              ...(prev.subtitle || DEFAULT_MOTION_CONFIG.subtitle || { text: "Qualidade para o seu dia.", fontSize: 22, visible: true }),
+              visible: patch.slogan,
+            },
+          }
+        : {}),
+      ...(patch.logo !== undefined
+        ? {
+            logo: {
+              ...prev.logo,
+              visible: patch.logo,
+            },
+          }
+        : {}),
+      ...(patch.brushCorners !== undefined
+        ? {
+            fx: {
+              ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
+              brushCorners: {
+                ...(prev.fx?.brushCorners || { enabled: true, opacity: 100, scale: 1 }),
+                enabled: patch.brushCorners,
+              },
+            },
+          }
+        : {}),
+      ...(patch.blackFridayImage !== undefined
+        ? {
+            blackFridayImage: {
+              ...(prev.blackFridayImage || DEFAULT_BLACK_FRIDAY_IMAGE),
+              visible: patch.blackFridayImage,
+            },
+          }
+        : {}),
+      ...(patch.fireSparks !== undefined
+        ? {
+            fireSparks: {
+              ...(prev.fireSparks || prev.fx?.fireSparks || DEFAULT_FIRE_SPARKS_CONFIG),
+              enabled: patch.fireSparks,
+            },
+            fx: {
+              ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
+              fireSparks: {
+                ...(prev.fx?.fireSparks || prev.fireSparks || DEFAULT_FIRE_SPARKS_CONFIG),
+                enabled: patch.fireSparks,
+              },
+            },
+          }
+        : {}),
     }));
   };
 
@@ -665,6 +761,34 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
     }
   };
 
+  const isSectionVisible = (sectionKey: string) => {
+    if (!activeCategory) return true;
+    switch (activeCategory) {
+      case "layout":
+        return ["layoutTuning", "layout", "videoOverlay"].includes(sectionKey);
+      case "fundo":
+        return ["background", "theme", "cartazColors", "ambient"].includes(sectionKey);
+      case "produto":
+        return ["productCard", "elementAnimations", "badge", "cartazColors", "layoutTuning", "visibility"].includes(sectionKey);
+      case "texto":
+        return ["cartazColors", "identity", "layoutTuning", "visibility"].includes(sectionKey);
+      case "preco":
+        return ["price", "badge", "cartazColors", "layoutTuning", "visibility"].includes(sectionKey);
+      case "marca":
+        return ["identity", "visibility"].includes(sectionKey);
+      case "efeitos":
+        return ["fireSparks", "blackFridayFx", "blackFridayImage", "ambient", "visibility"].includes(sectionKey);
+      case "motion":
+        return ["motion", "elementAnimations"].includes(sectionKey);
+      case "presets":
+        return false;
+      case "avancado":
+        return ["visibility", "layoutTuning", "cartazColors", "theme"].includes(sectionKey);
+      default:
+        return true;
+    }
+  };
+
   const fx = config.fx || DEFAULT_MOTION_CONFIG.fx || {};
   const co = config.colorOverrides || {};
   const ea = config.elementAnimations || DEFAULT_MOTION_CONFIG.elementAnimations || {};
@@ -678,6 +802,7 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
 
       <div className="controls-accordion-list">
         {/* SEÇÃO 0: AJUSTE INTERATIVO DE LAYOUTS (1, 2, 3, 4 PRODUTOS) */}
+        {isSectionVisible("layoutTuning") && (
         <div className={`accordion-item ${openSections.layoutTuning ? "open" : ""}`}>
           <button
             type="button"
@@ -893,6 +1018,51 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
                       />
                     </label>
                   </div>
+
+                  {/* Linhas Máximas do Nome */}
+                  <div style={{ marginTop: "12px" }}>
+                    <span className="control-label-mini">Máximo de Linhas (Evita cortar com "..."):</span>
+                    <div className="segmented-group" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "4px", marginTop: "4px" }}>
+                      {[
+                        { val: 2, label: "2 Linhas" },
+                        { val: 3, label: "3 Linhas" },
+                        { val: 4, label: "4 Linhas" },
+                        { val: 6, label: "Livre" },
+                      ].map((item) => (
+                        <button
+                          key={item.val}
+                          type="button"
+                          className={(currentTuning.productName?.maxLines ?? 3) === item.val ? "active" : ""}
+                          onClick={() =>
+                            updateLayoutTuning((prev) => ({
+                              ...prev,
+                              productName: {
+                                ...(prev.productName || {}),
+                                maxLines: item.val,
+                              },
+                            }))
+                          }
+                          style={{ fontSize: "11px", padding: "4px 2px" }}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: "10px", padding: "8px", background: "rgba(255, 255, 255, 0.04)", borderRadius: "6px" }}>
+                    <p style={{ margin: "0 0 6px", fontSize: "11px", color: "var(--muted)" }}>
+                      💡 <strong>Dica de Enquadramento:</strong> Para textos longos, aumente o espaço da coluna ou o enquadramento do produto.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ width: "100%", fontSize: "11px", padding: "5px 8px" }}
+                      onClick={() => setActiveLayoutTuningTab("columns")}
+                    >
+                      <LayoutGrid size={12} /> Aumentar Largura da Coluna de Texto
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1029,7 +1199,7 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
               {activeLayoutTuningTab === "columns" && (
                 <div className="control-field" style={{ padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: "8px", marginTop: "8px" }}>
                   <label>
-                    Espaço da Foto vs Textos: <strong>{Math.round((currentTuning.columnRatio ?? 0.56) * 100)}% para foto</strong>
+                    Espaço da Foto vs Textos: <strong>{Math.round((currentTuning.columnRatio ?? 0.56) * 100)}% para foto ({100 - Math.round((currentTuning.columnRatio ?? 0.56) * 100)}% para texto)</strong>
                     <input
                       type="range"
                       min="0.20"
@@ -1044,6 +1214,29 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
                       }
                     />
                   </label>
+
+                  <div className="segmented-group" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "4px", marginTop: "6px" }}>
+                    {[
+                      { ratio: 0.40, label: "60% Texto / 40% Foto" },
+                      { ratio: 0.50, label: "50% Texto / 50% Foto" },
+                      { ratio: 0.56, label: "44% Texto (Padrão)" },
+                    ].map((p) => (
+                      <button
+                        key={p.ratio}
+                        type="button"
+                        className={Math.abs((currentTuning.columnRatio ?? 0.56) - p.ratio) < 0.02 ? "active" : ""}
+                        onClick={() =>
+                          updateLayoutTuning((prev) => ({
+                            ...prev,
+                            columnRatio: p.ratio,
+                          }))
+                        }
+                        style={{ fontSize: "10px", padding: "4px 2px" }}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
 
                   <label style={{ marginTop: "8px" }}>
                     Distância entre Produtos (Gap): <strong>{currentTuning.gap ?? 16}px</strong>
@@ -1106,7 +1299,9 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
         {/* SEÇÃO: ELEMENTOS VISÍVEIS */}
+        {isSectionVisible("visibility") && (
         <div className={`accordion-item ${openSections.visibility ? "open" : ""}`}>
           <button
             type="button"
@@ -1335,8 +1530,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* A. SEÇÃO: CORES DO CARTAZ (PERSONALIZAÇÃO INDIVIDUAL & PRESETS) */}
+        {isSectionVisible("cartazColors") && (
         <div className={`accordion-item ${openSections.cartazColors ? "open" : ""}`}>
           <button
             type="button"
@@ -1631,8 +1828,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* SEÇÃO: FAÍSCAS DE FOGO / QUEIMA DE ESTOQUE */}
+        {isSectionVisible("fireSparks") && (
         <div className={`accordion-item ${openSections.fireSparks ? "open" : ""}`}>
           <button
             type="button"
@@ -1863,8 +2062,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* B. SEÇÃO: BLACK FRIDAY FX (DECORAÇÕES OPCIONAIS) */}
+        {isSectionVisible("blackFridayFx") && (
         <div className={`accordion-item ${openSections.blackFridayFx ? "open" : ""}`}>
           <button
             type="button"
@@ -2200,8 +2401,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* SEÇÃO: IMAGEM / LOGO BLACK FRIDAY (CAMADA EDITÁVEL) */}
+        {isSectionVisible("blackFridayImage") && (
         <div className={`accordion-item ${openSections.blackFridayImage ? "open" : ""}`}>
           <button
             type="button"
@@ -2833,8 +3036,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 2.5 SEÇÃO: SOBREPOSIÇÃO EM VÍDEOS (LOGO & BLACK FRIDAY) */}
+        {isSectionVisible("videoOverlay") && (
         <div className={`accordion-item ${openSections.videoOverlay ? "open" : ""}`}>
           <button
             type="button"
@@ -3172,8 +3377,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* C. SEÇÃO: ANIMAÇÃO DOS ELEMENTOS INDIVIDUAIS */}
+        {isSectionVisible("elementAnimations") && (
         <div className={`accordion-item ${openSections.elementAnimations ? "open" : ""}`}>
           <button
             type="button"
@@ -3258,8 +3465,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 1. SEÇÃO: FUNDO & CORES DA TV */}
+        {isSectionVisible("background") && (
         <div className={`accordion-item ${openSections.background ? "open" : ""}`}>
           <button
             type="button"
@@ -3679,8 +3888,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 2. SEÇÃO: APRESENTAÇÃO DO PRODUTO (SEM QUADRADO / CARDS) */}
+        {isSectionVisible("productCard") && (
         <div className={`accordion-item ${openSections.productCard ? "open" : ""}`}>
           <button
             type="button"
@@ -3751,8 +3962,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 3. SEÇÃO: SELO / BADGE / TAG NOS PRODUTOS */}
+        {isSectionVisible("badge") && (
         <div className={`accordion-item ${openSections.badge ? "open" : ""}`}>
           <button
             type="button"
@@ -4026,8 +4239,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 4. SEÇÃO: IDENTIDADE DA LOGO */}
+        {isSectionVisible("identity") && (
         <div className={`accordion-item ${openSections.identity ? "open" : ""}`}>
           <button
             type="button"
@@ -4411,8 +4626,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 5. SEÇÃO: FÍSICA DO PREÇO */}
+        {isSectionVisible("price") && (
         <div className={`accordion-item ${openSections.price ? "open" : ""}`}>
           <button
             type="button"
@@ -4488,8 +4705,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 6. SEÇÃO: AMBIENTE & LUZ */}
+        {isSectionVisible("ambient") && (
         <div className={`accordion-item ${openSections.ambient ? "open" : ""}`}>
           <button
             type="button"
@@ -4531,8 +4750,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 7. SEÇÃO: MOTION & VELOCIDADE */}
+        {isSectionVisible("motion") && (
         <div className={`accordion-item ${openSections.motion ? "open" : ""}`}>
           <button
             type="button"
@@ -4732,8 +4953,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 8. SEÇÃO: LAYOUT */}
+        {isSectionVisible("layout") && (
         <div className={`accordion-item ${openSections.layout ? "open" : ""}`}>
           <button
             type="button"
@@ -4770,8 +4993,10 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
 
         {/* 9. SEÇÃO: TEMA BASE */}
+        {isSectionVisible("theme") && (
         <div className={`accordion-item ${openSections.theme ? "open" : ""}`}>
           <button
             type="button"
@@ -4805,6 +5030,7 @@ export function MotionControls({ config, onChange, onReplay, sector = "acougue" 
             </div>
           )}
         </div>
+        )}
       </div>
     </aside>
   );
