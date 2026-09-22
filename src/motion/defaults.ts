@@ -39,6 +39,24 @@ export const DEFAULT_BLACK_FRIDAY_IMAGE: MotionBlackFridayImageConfig = Object.f
   }),
 });
 
+export function isBlackFridayImageVisible(config: Pick<MotionConfig, "visibility" | "blackFridayImage">): boolean {
+  return config.visibility?.blackFridayImage !== false && config.blackFridayImage?.visible !== false;
+}
+
+export function setBlackFridayImageVisibility(config: MotionConfig, visible: boolean): MotionConfig {
+  return {
+    ...config,
+    visibility: {
+      ...(config.visibility || DEFAULT_MOTION_CONFIG.visibility),
+      blackFridayImage: visible,
+    },
+    blackFridayImage: {
+      ...(config.blackFridayImage || DEFAULT_BLACK_FRIDAY_IMAGE),
+      visible,
+    },
+  };
+}
+
 export const DEFAULT_MOTION_CONFIG: MotionConfig = Object.freeze({
   themeSlug: "black-friday",
   layout: "grid8",

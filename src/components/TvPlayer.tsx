@@ -25,6 +25,7 @@ import { toThemeStyle } from "../themes/toThemeStyle";
 import { normalizeOfferLayout, type OfferLayout } from "../offers/layouts";
 import type { MotionConfig } from "../motion/types";
 import { loadActiveMotionConfig } from "../motion/storage";
+import { isBlackFridayImageVisible as resolveBlackFridayImageVisibility } from "../motion/defaults";
 import { useCachedMedia, preloadMediaList, pruneMediaCache } from "../mediaCache";
 
 export type TvPlayerProps = {
@@ -191,8 +192,9 @@ export function TvPlayer({
   const isBlackFridayImageVisible =
     isVideo && videoBfImageOverride?.visible !== undefined
       ? videoBfImageOverride.visible
-      : activeMotion?.visibility?.blackFridayImage !== false &&
-        activeMotion?.blackFridayImage?.visible !== false;
+      : activeMotion
+        ? resolveBlackFridayImageVisibility(activeMotion)
+        : true;
   const isSunburstBg = activeMotion?.background?.type === "sunburst" && !isVideo;
 
   const logoInlineStyle: React.CSSProperties = useMemo(() => {

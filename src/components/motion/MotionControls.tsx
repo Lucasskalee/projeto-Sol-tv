@@ -62,7 +62,13 @@ import type {
   FireSparksIntensity,
   FireSparksPerformance,
 } from "../../motion/types";
-import { DEFAULT_MOTION_CONFIG, DEFAULT_BLACK_FRIDAY_IMAGE, DEFAULT_FIRE_SPARKS_CONFIG } from "../../motion/defaults";
+import {
+  DEFAULT_MOTION_CONFIG,
+  DEFAULT_BLACK_FRIDAY_IMAGE,
+  DEFAULT_FIRE_SPARKS_CONFIG,
+  isBlackFridayImageVisible,
+  setBlackFridayImageVisibility,
+} from "../../motion/defaults";
 import { formatCompleteTuningExport } from "../../motion/layoutTuningFormatter";
 import { removeWhiteBackground } from "../../images/removeWhiteBackground";
 import { uploadMediaFile, databaseConfigured } from "../../supabase";
@@ -261,10 +267,13 @@ export function MotionControls({
     onChange((prev) => {
       const current = prev.blackFridayImage || DEFAULT_BLACK_FRIDAY_IMAGE;
       const updated = typeof patch === "function" ? patch(current) : { ...current, ...patch };
-      return {
+      const next = {
         ...prev,
         blackFridayImage: updated,
       };
+      return updated.visible === undefined
+        ? next
+        : setBlackFridayImageVisibility(next, updated.visible);
     });
   };
 
@@ -1442,20 +1451,9 @@ export function MotionControls({
                   <span>🔥 Imagem / Logo Black Friday</span>
                   <input
                     type="checkbox"
-                    checked={config.visibility?.blackFridayImage !== false && config.blackFridayImage?.visible !== false}
+                    checked={isBlackFridayImageVisible(config)}
                     onChange={(e) => {
-                      const checked = e.target.checked;
-                      onChange((prev) => ({
-                        ...prev,
-                        visibility: {
-                          ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
-                          blackFridayImage: checked,
-                        },
-                        blackFridayImage: {
-                          ...(prev.blackFridayImage || DEFAULT_BLACK_FRIDAY_IMAGE),
-                          visible: checked,
-                        },
-                      }));
+                      onChange((prev) => setBlackFridayImageVisibility(prev, e.target.checked));
                     }}
                   />
                 </label>
@@ -2463,7 +2461,7 @@ export function MotionControls({
                     <span>👁️ Exibir Imagem / Selo Black Friday</span>
                     <input
                       type="checkbox"
-                      checked={config.blackFridayImage?.visible !== false}
+                      checked={isBlackFridayImageVisible(config)}
                       onChange={(e) => updateBlackFridayImage({ visible: e.target.checked })}
                     />
                   </label>
