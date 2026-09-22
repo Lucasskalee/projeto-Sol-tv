@@ -324,6 +324,14 @@ export function MotionControls({
         typeof patch === "function" ? patch(current) : { ...current, ...patch };
       return {
         ...prev,
+        ...(updated.enabled === undefined
+          ? {}
+          : {
+              visibility: {
+                ...(prev.visibility || DEFAULT_MOTION_CONFIG.visibility),
+                fireSparks: updated.enabled,
+              },
+            }),
         fireSparks: updated,
         fx: {
           ...(prev.fx || DEFAULT_MOTION_CONFIG.fx),
