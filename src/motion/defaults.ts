@@ -57,6 +57,40 @@ export function setBlackFridayImageVisibility(config: MotionConfig, visible: boo
   };
 }
 
+export function shouldRenderBlackFridayImage(
+  config: Pick<MotionConfig, "visibility" | "blackFridayImage">,
+  themeSlug?: string
+): boolean {
+  if (!isBlackFridayImageVisible(config)) return false;
+
+  return themeSlug === "black-friday" || Boolean(config.blackFridayImage?.src?.trim());
+}
+
+export function isFireSparksVisible(
+  config: Pick<MotionConfig, "visibility" | "fireSparks" | "fx">
+): boolean {
+  const enabled = config.fx?.fireSparks?.enabled ?? config.fireSparks?.enabled ?? false;
+  return config.visibility?.fireSparks !== false && enabled;
+}
+
+export function setFireSparksVisibility(config: MotionConfig, visible: boolean): MotionConfig {
+  const current = config.fx?.fireSparks || config.fireSparks || DEFAULT_FIRE_SPARKS_CONFIG;
+  const updated = { ...current, enabled: visible };
+
+  return {
+    ...config,
+    visibility: {
+      ...(config.visibility || DEFAULT_MOTION_CONFIG.visibility),
+      fireSparks: visible,
+    },
+    fireSparks: updated,
+    fx: {
+      ...(config.fx || DEFAULT_MOTION_CONFIG.fx),
+      fireSparks: updated,
+    },
+  };
+}
+
 export const DEFAULT_MOTION_CONFIG: MotionConfig = Object.freeze({
   themeSlug: "black-friday",
   layout: "grid8",

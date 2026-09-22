@@ -25,7 +25,11 @@ import { toThemeStyle } from "../themes/toThemeStyle";
 import { normalizeOfferLayout, type OfferLayout } from "../offers/layouts";
 import type { MotionConfig } from "../motion/types";
 import { loadActiveMotionConfig } from "../motion/storage";
-import { isBlackFridayImageVisible as resolveBlackFridayImageVisibility } from "../motion/defaults";
+import {
+  isBlackFridayImageVisible as resolveBlackFridayImageVisibility,
+  isFireSparksVisible as resolveFireSparksVisibility,
+  shouldRenderBlackFridayImage,
+} from "../motion/defaults";
 import { useCachedMedia, preloadMediaList, pruneMediaCache } from "../mediaCache";
 
 export type TvPlayerProps = {
@@ -182,7 +186,7 @@ export function TvPlayer({
     activeMotion?.visibility?.brushCorners !== false &&
     activeMotion?.fx?.brushCorners?.enabled !== false &&
     isDecorationsVisible;
-  const isFireSparksVisible = activeMotion?.visibility?.fireSparks !== false;
+  const isFireSparksVisible = activeMotion ? resolveFireSparksVisibility(activeMotion) : false;
   const isBadgeAllowed = activeMotion?.visibility?.badge !== false && activeMotion?.badge?.visible !== false;
   const isOldPriceVisible = activeMotion?.visibility?.oldPrice !== false;
   const isUnitVisible = activeMotion?.visibility?.unit !== false;
@@ -195,6 +199,15 @@ export function TvPlayer({
       : activeMotion
         ? resolveBlackFridayImageVisibility(activeMotion)
         : true;
+  const renderBlackFridayImage = activeMotion
+    ? shouldRenderBlackFridayImage(
+        {
+          visibility: activeMotion.visibility,
+          blackFridayImage: effectiveBfImageConfig,
+        },
+        effectiveTheme.slug
+      )
+    : false;
   const isSunburstBg = activeMotion?.background?.type === "sunburst" && !isVideo;
 
   const logoInlineStyle: React.CSSProperties = useMemo(() => {
@@ -793,12 +806,14 @@ export function TvPlayer({
               {renderSlideContent(currentItem)}
 
               {/* Black Friday — Cartaz Digital Framing & Signature (Sincronizado com a transição da oferta) */}
+              {renderBlackFridayImage && (
+                <BlackFridayImageElement
+                  config={effectiveBfImageConfig}
+                  visible={isBlackFridayImageVisible}
+                />
+              )}
               {effectiveTheme.slug === "black-friday" && (
                 <>
-                  <BlackFridayImageElement
-                    config={effectiveBfImageConfig}
-                    visible={isBlackFridayImageVisible}
-                  />
                   {isBrushCornersVisible && (
                     <div className="bf-screen-brush-corners" aria-hidden="true">
                       <div className="bf-brush-corner bf-brush-tl" />
@@ -951,12 +966,14 @@ export function TvPlayer({
               {renderSlideContent(currentItem)}
 
               {/* Black Friday — Cartaz Digital Framing & Signature (Sincronizado com a transição da oferta) */}
+              {renderBlackFridayImage && (
+                <BlackFridayImageElement
+                  config={effectiveBfImageConfig}
+                  visible={isBlackFridayImageVisible}
+                />
+              )}
               {effectiveTheme.slug === "black-friday" && (
                 <>
-                  <BlackFridayImageElement
-                    config={effectiveBfImageConfig}
-                    visible={isBlackFridayImageVisible}
-                  />
                   {isBrushCornersVisible && (
                     <div className="bf-screen-brush-corners" aria-hidden="true">
                       <div className="bf-brush-corner bf-brush-tl" />
