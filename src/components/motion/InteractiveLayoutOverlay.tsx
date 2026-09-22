@@ -35,7 +35,11 @@ import {
 } from "lucide-react";
 import type { OfferLayout } from "../../offers/layouts";
 import type { PerLayoutTuning, MotionConfig } from "../../motion/types";
-import { DEFAULT_BLACK_FRIDAY_IMAGE } from "../../motion/defaults";
+import {
+  DEFAULT_BLACK_FRIDAY_IMAGE,
+  isBlackFridayImageVisible,
+  setBlackFridayImageVisibility,
+} from "../../motion/defaults";
 import { removeWhiteBackground } from "../../images/removeWhiteBackground";
 import { uploadMediaFile, databaseConfigured } from "../../supabase";
 
@@ -1748,20 +1752,16 @@ export function InteractiveLayoutOverlay({
                 <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" }}>
                   <button
                     type="button"
-                    className={`btn-toggle-mini ${config.blackFridayImage?.visible !== false ? "active" : ""}`}
+                    className={`btn-toggle-mini ${isBlackFridayImageVisible(config) ? "active" : ""}`}
                     onClick={() =>
-                      onUpdateConfig((prev) => ({
-                        ...prev,
-                        blackFridayImage: {
-                          ...(prev.blackFridayImage || DEFAULT_BLACK_FRIDAY_IMAGE),
-                          visible: prev.blackFridayImage?.visible === false ? true : false,
-                        },
-                      }))
+                      onUpdateConfig((prev) =>
+                        setBlackFridayImageVisibility(prev, !isBlackFridayImageVisible(prev))
+                      )
                     }
                     title="Exibir ou ocultar a imagem Black Friday"
                   >
-                    {config.blackFridayImage?.visible !== false ? <Eye size={12} /> : <EyeOff size={12} />}
-                    <span>{config.blackFridayImage?.visible !== false ? "Imagem: ATIVA" : "Imagem: OCULTA"}</span>
+                    {isBlackFridayImageVisible(config) ? <Eye size={12} /> : <EyeOff size={12} />}
+                    <span>{isBlackFridayImageVisible(config) ? "Imagem: ATIVA" : "Imagem: OCULTA"}</span>
                   </button>
                   <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.7)" }}>
                     Posição X: <strong>{config.blackFridayImage?.x ?? 82}%</strong> · Y: <strong>{config.blackFridayImage?.y ?? 6}%</strong>
