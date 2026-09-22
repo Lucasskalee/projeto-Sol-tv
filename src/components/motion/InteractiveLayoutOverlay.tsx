@@ -66,6 +66,10 @@ export interface InteractiveLayoutOverlayProps {
   isPaused?: boolean;
   onTogglePause?: () => void;
   containerRef?: React.RefObject<HTMLDivElement | null>;
+  onSelectElement?: (element: SelectableElementType) => void;
+  showTopBanner?: boolean;
+  showFloatingPanel?: boolean;
+  showOnScreenBoxes?: boolean;
 }
 
 interface ElementRect {
@@ -89,6 +93,10 @@ export function InteractiveLayoutOverlay({
   isPaused = true,
   onTogglePause,
   containerRef,
+  onSelectElement,
+  showTopBanner = false,
+  showFloatingPanel = false,
+  showOnScreenBoxes: propShowOnScreenBoxes = true,
 }: InteractiveLayoutOverlayProps) {
   const isVideoMode = (layout as string) === "video";
   const [selectedElement, setSelectedElement] =
@@ -105,6 +113,11 @@ export function InteractiveLayoutOverlay({
     initialPctY?: number;
   } | null>(null);
 
+  // Notify parent component about element selection
+  useEffect(() => {
+    onSelectElement?.(selectedElement);
+  }, [selectedElement, onSelectElement]);
+
   // Auto-switch selected element in video mode
   useEffect(() => {
     if (isVideoMode) {
@@ -117,7 +130,9 @@ export function InteractiveLayoutOverlay({
   // Visibilidade e Minimização dos Controles
   const [isUiVisible, setIsUiVisible] = useState<boolean>(true);
   const [isPanelMinimized, setIsPanelMinimized] = useState<boolean>(false);
-  const [showOnScreenBoxes, setShowOnScreenBoxes] = useState<boolean>(true);
+  const [localShowOnScreenBoxes, setLocalShowOnScreenBoxes] = useState<boolean>(true);
+  const showOnScreenBoxes = propShowOnScreenBoxes ?? localShowOnScreenBoxes;
+  const setShowOnScreenBoxes = setLocalShowOnScreenBoxes;
 
   // Estado para Remoção de Fundo e Upload da Logo
   const [logoBgTolerance, setLogoBgTolerance] = useState<number>(30);
@@ -1101,7 +1116,8 @@ export function InteractiveLayoutOverlay({
       onWheel={handleWheel}
     >
       {/* Top Banner Toolbar */}
-      <div className="interactive-top-bar">
+      {showTopBanner && (
+        <div className="interactive-top-bar">
         {/* Play/Pause control */}
         {onTogglePause && (
           <button
@@ -1262,6 +1278,7 @@ export function InteractiveLayoutOverlay({
           </button>
         </div>
       </div>
+      )}
 
       {/* DIRECT ON-SCREEN CLICKABLE HOTSPOTS & BOUNDING BOX (SE ATIVADO) */}
       {showOnScreenBoxes && (
@@ -1403,7 +1420,8 @@ export function InteractiveLayoutOverlay({
       )}
 
       {/* Floating Canvas Control Panel for Selected Element */}
-      {isPanelMinimized ? (
+      {showFloatingPanel && (
+        isPanelMinimized ? (
         <button
           type="button"
           className="btn-floating-panel-pill"
@@ -2421,7 +2439,7 @@ export function InteractiveLayoutOverlay({
             })()}
           </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }

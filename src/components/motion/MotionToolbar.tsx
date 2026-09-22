@@ -5,6 +5,8 @@ import {
   Save,
   Sparkles,
   Tv,
+  PanelLeftClose,
+  PanelLeft,
   PanelRightClose,
   PanelRight,
   Eye,
@@ -25,6 +27,8 @@ export type MotionToolbarProps = {
   publishedVersion?: number;
   publishedAt?: string | null;
   isPublishing?: boolean;
+  isLeftPanelOpen?: boolean;
+  onToggleLeftPanel?: () => void;
   isRightPanelOpen?: boolean;
   onToggleRightPanel?: () => void;
   isCleanView?: boolean;
@@ -42,6 +46,8 @@ export function MotionToolbar({
   publishedVersion = 1,
   publishedAt,
   isPublishing = false,
+  isLeftPanelOpen = true,
+  onToggleLeftPanel,
   isRightPanelOpen = true,
   onToggleRightPanel,
   isCleanView = false,
@@ -55,45 +61,41 @@ export function MotionToolbar({
     : null;
 
   return (
-    <header className="motion-studio-toolbar h-14 min-h-[56px] px-4 bg-[#0d1016] border-b border-border-light/15 flex items-center justify-between gap-4 z-40 shrink-0">
-      {/* Left: Brand Identity, Back Link & Sector Selector */}
-      <div className="flex items-center gap-3 shrink-0">
-        <Link
-          to="/admin"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
-          title="Retornar ao Painel de Gestão"
-        >
-          <ArrowLeft size={14} /> <span>Admin</span>
-        </Link>
+    <header className="motion-studio-toolbar">
+      {/* Left: Brand Identity, Sector Selector & Panel Toggle */}
+      <div className="toolbar-brand-group">
+        {onToggleLeftPanel && (
+          <button
+            type="button"
+            className={`btn-toolbar-icon ${isLeftPanelOpen ? "active" : ""}`}
+            onClick={onToggleLeftPanel}
+            title={isLeftPanelOpen ? "Recolher Painel de Propriedades" : "Expandir Painel de Propriedades"}
+          >
+            {isLeftPanelOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+          </button>
+        )}
 
-        <div className="h-4 w-[1px] bg-white/10" />
+        <div className="studio-brand-icon">
+          <Sparkles size={16} />
+        </div>
 
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-accent/20 border border-accent/40 flex items-center justify-center text-accent">
-            <Sparkles size={14} />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-accent text-accent-foreground">
-              SKALEE TV
-            </span>
-            <span className="font-extrabold text-sm text-foreground whitespace-nowrap hidden sm:inline">
-              Motion Studio
-            </span>
-          </div>
+        <div className="studio-brand-titles">
+          <div className="studio-app-badge">SOL TV</div>
+          <h1 className="studio-title">Motion Lab</h1>
         </div>
 
         {/* Sector Selector */}
         {onSectorChange && (
-          <div className="flex items-center gap-1.5 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-foreground">
-            <Tv size={13} className="text-accent" />
+          <div className="toolbar-sector-selector-wrap">
+            <Tv size={13} className="sector-icon" />
             <select
-              className="bg-transparent border-0 text-xs font-semibold text-foreground focus:outline-none cursor-pointer pr-1"
+              className="toolbar-sector-select"
               value={sector}
               onChange={(e) => onSectorChange(e.target.value)}
               title="Selecione o setor da TV para editar a identidade visual"
             >
               {SECTORS.map((s) => (
-                <option key={s.id} value={s.id} className="bg-[#121620] text-foreground">
+                <option key={s.id} value={s.id}>
                   {s.label}
                 </option>
               ))}
@@ -103,27 +105,27 @@ export function MotionToolbar({
       </div>
 
       {/* Center: Active Preset & Publication Status Badge */}
-      <div className="hidden md:flex items-center gap-2.5 shrink-0">
-        <div className="flex items-center gap-1.5 px-3 py-1 bg-surface-dark border border-white/10 rounded-full text-xs">
-          <span className="text-muted-foreground font-medium">Preset:</span>
-          <strong className="text-accent font-bold">{activePreset.name}</strong>
+      <div className="toolbar-preset-status">
+        <div className="active-preset-pill">
+          <span className="preset-pill-label">Preset:</span>
+          <strong className="preset-pill-name">{activePreset.name}</strong>
         </div>
 
         {/* Publication Status Badge */}
         {isDirty ? (
           <span
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/15 border border-amber-500/30 text-amber-400 rounded-full text-xs font-semibold"
+            className="dirty-indicator-pill is-dirty"
             title="Existem alterações no rascunho prontas para serem publicadas na TV"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="dirty-dot" />
             <span>Rascunho não publicado</span>
           </span>
         ) : (
           <span
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 rounded-full text-xs font-semibold"
+            className="dirty-indicator-pill is-clean"
             title={`Configuração publicada e ativa na TV (v${publishedVersion})`}
           >
-            <Radio size={12} className="text-emerald-400" />
+            <Radio size={12} className="text-success" />
             <span>
               Ao Vivo na TV (v{publishedVersion}
               {formattedPublishedTime ? ` · ${formattedPublishedTime}` : ""})
@@ -132,29 +134,25 @@ export function MotionToolbar({
         )}
       </div>
 
-      {/* Right: Studio Actions & Clean View */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Right: Studio Actions & Panel Toggles */}
+      <div className="toolbar-actions">
         {/* Clean View Mode Toggle */}
         {onToggleCleanView && (
           <button
             type="button"
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
-              isCleanView
-                ? "bg-accent text-accent-foreground border-accent"
-                : "bg-surface-dark/60 border-white/10 text-muted-foreground hover:text-foreground hover:bg-surface-dark"
-            }`}
+            className={`btn btn-secondary toolbar-btn ${isCleanView ? "active-clean-view" : ""}`}
             onClick={onToggleCleanView}
             title={isCleanView ? "Sair do modo limpo (H)" : "Modo Limpo: Ocultar painéis e menus (H)"}
           >
             {isCleanView ? <Eye size={14} /> : <EyeOff size={14} />}
-            <span className="hidden xl:inline">{isCleanView ? "Mostrar Painéis" : "Modo Limpo (H)"}</span>
+            <span>{isCleanView ? "Mostrar Painéis" : "Ocultar Controles (H)"}</span>
           </button>
         )}
 
         {/* Save Preset */}
         <button
           type="button"
-          className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-dark/60 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-surface-dark transition-colors"
+          className="btn btn-secondary toolbar-btn"
           onClick={onSavePreset}
           title="Salvar como preset na biblioteca local"
         >
@@ -164,7 +162,7 @@ export function MotionToolbar({
         {/* Duplicate */}
         <button
           type="button"
-          className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-dark/60 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-surface-dark transition-colors"
+          className="btn btn-secondary toolbar-btn"
           onClick={onDuplicatePreset}
           title="Duplicar configuração atual em um novo preset"
         >
@@ -175,7 +173,7 @@ export function MotionToolbar({
         {onPublishToTv && (
           <button
             type="button"
-            className="btn btn-primary btn-publish-tv flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold shadow-md shadow-accent/20"
+            className={`btn btn-primary toolbar-btn btn-publish-tv ${isPublishing ? "is-publishing" : ""}`}
             onClick={onPublishToTv}
             disabled={isPublishing}
             title="Publicar esta identidade visual imediatamente na TV do setor via Supabase Realtime"
@@ -185,21 +183,26 @@ export function MotionToolbar({
           </button>
         )}
 
-        {/* Toggle Right Inspector on Desktop */}
+        {/* Toggle Right Preset Panel */}
         {onToggleRightPanel && (
           <button
             type="button"
-            className={`hidden md:flex p-1.5 rounded-lg border text-muted-foreground hover:text-foreground transition-colors ${
-              isRightPanelOpen
-                ? "bg-white/10 border-white/20 text-foreground"
-                : "bg-surface-dark border-white/10"
-            }`}
+            className={`btn-toolbar-icon ${isRightPanelOpen ? "active" : ""}`}
             onClick={onToggleRightPanel}
-            title={isRightPanelOpen ? "Recolher Painel de Propriedades" : "Expandir Painel de Propriedades"}
+            title={isRightPanelOpen ? "Recolher Biblioteca de Presets" : "Expandir Biblioteca de Presets"}
           >
             {isRightPanelOpen ? <PanelRightClose size={16} /> : <PanelRight size={16} />}
           </button>
         )}
+
+        {/* Back to Admin */}
+        <Link
+          to="/admin"
+          className="btn btn-secondary toolbar-btn toolbar-back-btn"
+          title="Retornar ao Painel de Gestão"
+        >
+          <ArrowLeft size={14} /> <span>Voltar ao Admin</span>
+        </Link>
       </div>
     </header>
   );

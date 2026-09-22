@@ -282,6 +282,7 @@ export interface LayoutElementConfig {
   x?: number; // -200 to +200 px offset
   y?: number; // -200 to +200 px offset
   opacity?: number; // 0 to 100%
+  maxLines?: number; // 1, 2, 3, 4 ou mais linhas permitidas
 }
 
 export interface PerLayoutTuning {

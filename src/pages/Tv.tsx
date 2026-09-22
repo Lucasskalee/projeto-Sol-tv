@@ -6,8 +6,6 @@ import {
   loadSectorTheme,
   loadTvContent,
   subscribeToTvContent,
-  loadVisualConfig,
-  subscribeToVisualConfig,
   loadCachedVisualConfig,
 } from "../supabase";
 import type { TvContent } from "../types";
@@ -19,7 +17,10 @@ import {
 } from "../themes/resolveTheme";
 import type { ThemeDefinition } from "../themes/types";
 import type { MotionConfig } from "../motion/types";
-import { loadActiveMotionConfig, subscribeToActiveMotionConfig } from "../motion/storage";
+import {
+  getPublicationForSector,
+  subscribeToSectorPublication,
+} from "../services/motionLayoutService";
 
 export default function Tv() {
   const { sector: routeSector } = useParams<{ sector?: string }>();
@@ -33,7 +34,7 @@ export default function Tv() {
   );
   const [motionConfig, setMotionConfig] = useState<MotionConfig>(() => {
     const cachedVisual = loadCachedVisualConfig(activeSector);
-    return cachedVisual.publishedConfig || loadActiveMotionConfig();
+    return cachedVisual.publishedConfig;
   });
   const [connection, setConnection] = useState<"online" | "syncing" | "offline">(
     databaseConfigured ? "syncing" : "offline",
@@ -42,8 +43,8 @@ export default function Tv() {
 
   useEffect(() => {
     setContent(cachedContent(activeSector));
-    
-    // 1. Initial cached config loading
+
+    // 1. Initial published snapshot loading
     const cachedVisual = loadCachedVisualConfig(activeSector);
     if (cachedVisual.publishedConfig) {
       setMotionConfig(cachedVisual.publishedConfig);
@@ -54,6 +55,16 @@ export default function Tv() {
       setTheme(resolveTheme(queryTheme || getSectorThemeSlug(activeSector)));
     }
 
+    // Load active published snapshot from publication service
+    void getPublicationForSector(activeSector).then((pub) => {
+      if (pub.publishedConfig) {
+        setMotionConfig(pub.publishedConfig);
+        if (!queryTheme && pub.publishedConfig.themeSlug) {
+          setTheme(resolveTheme(pub.publishedConfig.themeSlug));
+        }
+      }
+    });
+
     // 2. Realtime Theme subscription
     const unsubscribeTheme = subscribeToSectorTheme(activeSector, (newTheme) => {
       if (!queryTheme) setTheme(newTheme);
@@ -63,47 +74,27 @@ export default function Tv() {
       if (!queryTheme) setTheme(resolveTheme(slug));
     });
 
-    // 3. Fallback Local Motion storage subscription (for local dev)
-    const unsubscribeMotion = subscribeToActiveMotionConfig((newConfig) => {
-      setMotionConfig(newConfig);
-    });
-
-    // 4. Supabase Realtime Visual Config subscription (sol_tv_visual_configs)
-    let unsubscribeVisual: () => void = () => {};
-    if (databaseConfigured) {
-      loadVisualConfig(activeSector)
-        .then((data) => {
-          if (data.publishedConfig) {
-            setMotionConfig(data.publishedConfig);
-            if (!queryTheme && data.publishedConfig.themeSlug) {
-              setTheme(resolveTheme(data.publishedConfig.themeSlug));
-            }
-          }
-        })
-        .catch((err) => {
-          console.error("[TV Visual] Erro ao carregar configuração visual:", err);
-        });
-
-      unsubscribeVisual = subscribeToVisualConfig(activeSector, (data) => {
-        if (data.publishedConfig) {
-          console.log(`[TV Visual Realtime] Atualização recebida para setor ${activeSector} (v${data.publishedVersion})`);
-          setMotionConfig(data.publishedConfig);
-          if (!queryTheme && data.publishedConfig.themeSlug) {
-            setTheme(resolveTheme(data.publishedConfig.themeSlug));
-          }
+    // 3. Realtime Publication Subscription (Listens ONLY to explicit publications!)
+    const unsubscribePublication = subscribeToSectorPublication(activeSector, (pub) => {
+      if (pub.publishedConfig) {
+        console.log(
+          `[TV Publication Realtime] Publicação recebida para ${activeSector} (v${pub.publishedVersion} - ${pub.layoutName})`
+        );
+        setMotionConfig(pub.publishedConfig);
+        if (!queryTheme && pub.publishedConfig.themeSlug) {
+          setTheme(resolveTheme(pub.publishedConfig.themeSlug));
         }
-      });
-    }
+      }
+    });
 
     if (!databaseConfigured) {
       return () => {
         unsubscribeTheme();
-        unsubscribeMotion();
-        unsubscribeVisual();
+        unsubscribePublication();
       };
     }
 
-    // 5. TV Content loading & subscription
+    // 4. TV Content loading & subscription
     loadTvContent(activeSector, true)
       .then((data) => {
         setContent(data);
@@ -128,8 +119,7 @@ export default function Tv() {
     return () => {
       unsubscribeTheme();
       unsubscribeContent();
-      unsubscribeMotion();
-      unsubscribeVisual();
+      unsubscribePublication();
     };
   }, [activeSector, queryTheme]);
 
