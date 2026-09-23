@@ -16,7 +16,15 @@ export async function fetchCatalogs(store: string, sector: string): Promise<Cata
   check(error); return data || [];
 }
 export async function saveCatalog(catalog: Partial<Catalog> & Pick<Catalog, 'store' | 'sector' | 'name'>): Promise<Catalog> {
-  const { data, error } = await client().from('sol_tv_folders').upsert({ ...catalog, name: catalog.name.trim(), schedule_type: 'always' }).select().single();
+  // Never send generated scope_key or server-owned audit fields back to Postgres.
+  const payload = {
+    ...(catalog.id ? { id: catalog.id } : {}),
+    store: catalog.store.trim(), sector: catalog.sector.trim().toLowerCase(),
+    name: catalog.name.trim(), description: catalog.description || '',
+    active: catalog.active ?? true, is_default: catalog.is_default ?? false,
+    schedule_type: 'always',
+  };
+  const { data, error } = await client().from('sol_tv_folders').upsert(payload).select().single();
   check(error); return data as Catalog;
 }
 export async function setDefaultCatalog(id: string): Promise<void> {
