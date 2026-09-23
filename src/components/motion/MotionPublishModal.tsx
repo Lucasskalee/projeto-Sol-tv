@@ -14,6 +14,7 @@ import type { MotionConfig } from "../../motion/types";
 import { SECTORS } from "../../data";
 
 export interface MotionPublishModalProps {
+  catalogName?: string;
   isOpen: boolean;
   onClose: () => void;
   onConfirmPublish: () => void;
@@ -25,6 +26,7 @@ export interface MotionPublishModalProps {
 }
 
 export function MotionPublishModal({
+  catalogName,
   isOpen,
   onClose,
   onConfirmPublish,
@@ -73,7 +75,7 @@ export function MotionPublishModal({
             </div>
             <div>
               <h2 id="publish-modal-title">Publicar Identidade Visual na TV</h2>
-              <p>Envio imediato em tempo real para as telas do setor</p>
+              <p>{catalogName ? `Visual do catálogo ${catalogName}; exibido quando ele estiver ativo na TV.` : "Envio imediato em tempo real para as telas do setor"}</p>
             </div>
           </div>
           <button

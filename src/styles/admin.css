@@ -4873,3 +4873,9 @@
 
 
 
+
+.catalog-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.catalog-form { display: grid; gap: 14px; padding: 20px; margin-bottom: 20px; }
+.catalog-form label, .catalog-form form { display: grid; gap: 8px; }
+.catalog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.catalog-actions span { flex: 1; min-width: 140px; }

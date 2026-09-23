@@ -4,6 +4,7 @@ import type { OfferComposition } from "../../../offers/compositions";
 import { CatalogManager } from "../catalogs/CatalogManager";
 
 export type CompositionManagerProps = {
+  store?: string;
   sector: string;
   sectorLabel?: string;
   offers: readonly Offer[];
