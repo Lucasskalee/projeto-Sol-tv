@@ -52,6 +52,9 @@ export type ProgramScreen = {
 };
 
 export type TvProgram = {
+  catalogId?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
   id: string;
   name: string;
   store: string;
@@ -196,6 +199,13 @@ export function calculateProgramStatus(
     return "inactive";
   }
 
+  if (program.catalogId) {
+    const now = referenceDate.getTime();
+    const start = Date.parse(program.startsAt || '');
+    const end = Date.parse(program.endsAt || '');
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 'inactive';
+    return now < start ? 'scheduled' : now >= end ? 'ended' : 'live';
+  }
   const currentDateStr = formatDate(referenceDate);
   const currentDay = referenceDate.getDay();
   const currentMinutes = referenceDate.getHours() * 60 + referenceDate.getMinutes();
@@ -913,6 +923,7 @@ export function getProgramCounters(program: TvProgram): {
   imagesCount: number;
   summaryText: string;
 } {
+  if (program.catalogId) return { screensCount: 0, productsCount: 0, videosCount: 0, imagesCount: 0, summaryText: "Conteúdo do catálogo vinculado" };
   let productsCount = 0;
   let videosCount = 0;
   let imagesCount = 0;
@@ -952,6 +963,7 @@ export function getProgramCounters(program: TvProgram): {
  * Retorna texto formatado de horário e período (Ex: "Sex. 07:00 → Sex. 22:00").
  */
 export function formatProgramSchedulePeriod(program: TvProgram): string {
+  if (program.catalogId && program.startsAt && program.endsAt) return `${new Date(program.startsAt).toLocaleString("pt-BR")} até ${new Date(program.endsAt).toLocaleString("pt-BR")}`;
   const { recurrence, weekdays, startTime, endTime, startDate, endDate, overrideMode } = program.schedule;
 
   const startT = startTime || "07:00";

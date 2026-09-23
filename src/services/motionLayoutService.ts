@@ -503,7 +503,7 @@ export async function listPublications(): Promise<Record<string, MotionPublicati
 
   return (data || []).reduce<Record<string, MotionPublication>>((publications, row) => {
     const sector = String(row.sector || "").toLowerCase();
-    if (!sector || !row.published_config) return publications;
+    if (!sector || !row.published_config || row.catalog_id) return publications;
     publications[sector] = toMotionPublication({
       sector,
       draftConfig: cloneMotionConfig(row.draft_config || row.published_config),

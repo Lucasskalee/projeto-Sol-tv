@@ -1,3 +1,4 @@
+import { fetchCatalog, fetchCatalogVisual, saveCatalogVisual } from "../services/catalogService";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { MotionLayoutLibrary } from "../components/motion/MotionLayoutLibrary";
@@ -34,11 +35,12 @@ import { SECTORS } from "../data";
 
 export default function MotionStudio() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const catalogId = searchParams.get("catalog");
   const initialLayoutId = searchParams.get("id") || searchParams.get("layout");
 
   // 1. Navigation Mode ('library' vs 'editor')
   const [viewMode, setViewMode] = useState<"library" | "editor">(() =>
-    initialLayoutId ? "editor" : "library"
+    initialLayoutId || catalogId ? "editor" : "library"
   );
   const [currentLayout, setCurrentLayout] = useState<MotionLayout | null>(null);
   const [publications, setPublications] = useState<Record<string, MotionPublication>>({});
@@ -102,9 +104,18 @@ export default function MotionStudio() {
 
   // Load initial publications and check URL layoutId
   useEffect(() => {
-    void listPublications().then((pubs) => {
-      setPublications(pubs);
-    });
+    if (catalogId) {
+      let disposed = false;
+      void Promise.all([fetchCatalog(catalogId), fetchCatalogVisual(catalogId)]).then(([catalog, visual]) => {
+        if (disposed) return;
+        const config = cloneMotionConfig(visual?.draft_config || visual?.published_config || DEFAULT_MOTION_CONFIG);
+        setSector(catalog.sector); setCurrentConfig(config); setSavedConfig(cloneMotionConfig(config));
+        setCurrentLayout({ id: catalog.id, name: catalog.name, category: 'custom', config, createdAt: catalog.created_at, updatedAt: catalog.updated_at });
+        setPublishedVersion(visual?.published_version || 0); setViewMode('editor');
+      }).catch(err => { if (!disposed) showToast(err.message || 'Erro ao carregar catálogo', 'error'); });
+      return () => { disposed = true; };
+    }
+    void listPublications().then(setPublications).catch(err => showToast(err.message, 'error'));
 
     if (initialLayoutId) {
       void getLayoutById(initialLayoutId).then((found) => {
@@ -116,7 +127,7 @@ export default function MotionStudio() {
         }
       });
     }
-  }, [initialLayoutId]);
+  }, [initialLayoutId, catalogId, showToast]);
 
   // Dirty check: True if currentConfig differs from savedConfig in layout
   const isDirty = useMemo(() => {
@@ -215,6 +226,11 @@ export default function MotionStudio() {
     if (!currentLayout) return;
     setIsSaving(true);
     try {
+      if (catalogId) {
+        await saveCatalogVisual(catalogId, sector, currentConfig, false);
+        setSavedConfig(cloneMotionConfig(currentConfig)); setLastSavedAt(new Date());
+        showToast('Rascunho do catálogo salvo no Supabase.'); return;
+      }
       const updated = await updateLayout(currentLayout.id, {
         config: currentConfig,
       });
@@ -237,6 +253,11 @@ export default function MotionStudio() {
     if (!currentLayout) return;
     setIsPublishing(true);
     try {
+      if (catalogId) {
+        await saveCatalogVisual(catalogId, sector, currentConfig, true);
+        setSavedConfig(cloneMotionConfig(currentConfig)); setPublishedVersion(v => v + 1); setIsPublishModalOpen(false);
+        showToast('Visual publicado no catálogo. Será exibido quando ele estiver ativo na TV.'); return;
+      }
       // Publish directly to the official visual configuration. Saving a layout
       // draft is a separate operation and must not block the live publication.
       const pub = await publishLayoutToSector({
@@ -460,6 +481,7 @@ export default function MotionStudio() {
 
   // Handler: Back to Library
   const handleBackToLibrary = () => {
+    if (catalogId) { window.location.assign('/admin'); return; }
     setViewMode("library");
     setSearchParams({});
   };
@@ -483,6 +505,7 @@ export default function MotionStudio() {
   // ===========================================================================
   return (
     <div className={`motion-studio-container ${isCleanView ? "is-clean-view-mode" : ""}`}>
+      {catalogId && <div className="studio-toast-banner">Catálogo: {currentLayout?.name || 'Carregando…'}. Salvar rascunho e publicar afetam somente este catálogo.</div>}
       {/* Toast Notification Banner */}
       {toast && (
         <div className={`studio-toast-banner toast-${toast.type}`}>
@@ -616,6 +639,7 @@ export default function MotionStudio() {
         isPublishing={isPublishing}
         sector={sector}
         currentConfig={currentConfig}
+        catalogName={catalogId ? currentLayout?.name : undefined}
         savedConfig={savedConfig}
         publishedVersion={publishedVersion}
       />

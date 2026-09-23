@@ -1,152 +1,94 @@
-import { useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
-import {
-  cachedContent,
-  databaseConfigured,
-  loadSectorTheme,
-  loadTvContent,
-  subscribeToTvContent,
-  loadCachedVisualConfig,
-  isVisualConfigNewer,
-  loadVisualConfig,
-  subscribeToVisualConfig,
-  type VisualConfigData,
-} from "../supabase";
-import type { TvContent } from "../types";
-import { TvPlayer } from "../components/TvPlayer";
-import {
-  getSectorThemeSlug,
-  resolveTheme,
-  subscribeToSectorTheme,
-} from "../themes/resolveTheme";
-import type { ThemeDefinition } from "../themes/types";
-import type { MotionConfig } from "../motion/types";
+import { useEffect, useMemo, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { cachedContent, loadTvContent, loadVisualConfig, loadCachedVisualConfig } from '../supabase';
+import { TvPlayer } from '../components/TvPlayer';
+import { resolveTheme } from '../themes/resolveTheme';
+import { cloneMotionConfig } from '../motion/defaults';
+import { safeLocalStorageSetItem } from '../motion/storage';
+import { catalogToContent, resolveCatalog, type CatalogSnapshot } from '../catalogs';
+import { fetchCatalogSnapshot, loadCatalogLibrary, subscribeCatalogChanges } from '../services/catalogService';
+import type { TvContent } from '../types';
+import type { MotionConfig } from '../motion/types';
+
+const emptySnapshot: CatalogSnapshot = { catalogs: [], items: [], programs: [], visuals: [] };
+type PlaybackData = { snapshot: CatalogSnapshot; library: TvContent; legacy: TvContent; visual: MotionConfig };
+function cacheKey(store: string, sector: string) { return `skalee_catalog_playback_v1:${store.toLowerCase()}:${sector}`; }
+function initialData(store: string, sector: string): PlaybackData {
+  try {
+    const saved = JSON.parse(localStorage.getItem(cacheKey(store, sector)) || 'null');
+    if (saved?.snapshot && saved?.library?.playlist && saved?.legacy?.playlist && saved?.visual) return saved;
+  } catch { /* best-effort offline cache */ }
+  const legacy = cachedContent(sector);
+  return { snapshot: emptySnapshot, library: legacy, legacy, visual: loadCachedVisualConfig(sector).publishedConfig };
+}
 
 export default function Tv() {
   const { sector: routeSector } = useParams<{ sector?: string }>();
-  const [searchParams] = useSearchParams();
-  const activeSector = (routeSector || "acougue").toLowerCase();
-  const queryTheme = searchParams.get("theme");
-
-  const [content, setContent] = useState<TvContent>(() => cachedContent(activeSector));
-  const [theme, setTheme] = useState<ThemeDefinition>(() =>
-    resolveTheme(queryTheme || getSectorThemeSlug(activeSector)),
-  );
-  const [motionConfig, setMotionConfig] = useState<MotionConfig>(() => {
-    const cachedVisual = loadCachedVisualConfig(activeSector);
-    return cachedVisual.publishedConfig;
-  });
-  const visualConfigRef = useRef<VisualConfigData>(loadCachedVisualConfig(activeSector));
-  const [connection, setConnection] = useState<"online" | "syncing" | "offline">(
-    databaseConfigured ? "syncing" : "offline",
-  );
+  const [params] = useSearchParams();
+  const sector = (routeSector || 'acougue').toLowerCase();
+  const store = params.get('store')?.trim() || 'Loja 01';
+  const queryTheme = params.get('theme');
+  const [data, setData] = useState(() => initialData(store, sector));
+  const [now, setNow] = useState(Date.now);
+  const [connection, setConnection] = useState<'online' | 'syncing' | 'offline'>('syncing');
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
   useEffect(() => {
-    setContent(cachedContent(activeSector));
-
-    // 1. Initial published snapshot loading
-    const cachedVisual = loadCachedVisualConfig(activeSector);
-    visualConfigRef.current = cachedVisual;
-    if (import.meta.env.DEV) {
-      console.log(`[MOTION] Cache carregado: version ${cachedVisual.publishedVersion}`);
-    }
-    if (cachedVisual.publishedConfig) {
-      setMotionConfig(cachedVisual.publishedConfig);
-      if (!queryTheme && cachedVisual.publishedConfig.themeSlug) {
-        setTheme(resolveTheme(cachedVisual.publishedConfig.themeSlug));
-      }
-    } else {
-      setTheme(resolveTheme(queryTheme || getSectorThemeSlug(activeSector)));
-    }
-
-    const applyVisualConfig = (visual: VisualConfigData, force = false) => {
-      if (!force && !isVisualConfigNewer(visual, visualConfigRef.current)) return;
-
-      visualConfigRef.current = visual;
-      setMotionConfig(visual.publishedConfig);
-      if (!queryTheme && visual.publishedConfig.themeSlug) {
-        setTheme(resolveTheme(visual.publishedConfig.themeSlug));
+    let disposed = false;
+    let loading = false;
+    let pending = false;
+    setData(initialData(store, sector));
+    setConnection('syncing');
+    const reload = async () => {
+      if (disposed) return;
+      if (loading) { pending = true; return; }
+      loading = true;
+      try {
+        const snapshot = await fetchCatalogSnapshot(store, sector).catch(error => {
+          // New schema absent: continue the existing TV during the staged migration.
+          if (['42703', '42P01', 'PGRST204', 'PGRST205'].includes(error?.code)) return emptySnapshot;
+          throw error;
+        });
+        const [legacy, library, visual] = await Promise.all([
+          loadTvContent(sector, true),
+          snapshot.catalogs.length ? loadCatalogLibrary(sector) : Promise.resolve(null),
+          loadVisualConfig(sector),
+        ]);
+        if (disposed) return;
+        const next = { snapshot, legacy, library: library || legacy, visual: visual.publishedConfig };
+        setData(next);
+        safeLocalStorageSetItem(cacheKey(store, sector), JSON.stringify(next));
+        setConnection('online'); setLastSync(new Date());
+      } catch (error) {
+        if (!disposed) { console.warn('[TV] Mantendo último conteúdo confirmado:', error); setConnection('offline'); }
+      } finally {
+        loading = false;
+        if (pending && !disposed) { pending = false; void reload(); }
       }
     };
-
-    // Server configuration always wins over the local fallback on initial load.
-    void loadVisualConfig(activeSector).then((visual) => {
-      if (import.meta.env.DEV) {
-        console.log(`[MOTION] Servidor carregado: version ${visual.publishedVersion}`);
-        console.log(`[MOTION] Aplicando servidor: version ${visual.publishedVersion}`);
-      }
-      applyVisualConfig(visual, true);
-    });
-
-    const unsubscribeVisual = subscribeToVisualConfig(
-      activeSector,
-      (visual) => {
-        if (isVisualConfigNewer(visual, visualConfigRef.current)) {
-          if (import.meta.env.DEV) {
-            console.log(`[MOTION] Nova publicação recebida: version ${visual.publishedVersion}`);
-          }
-          applyVisualConfig(visual);
-        }
-      },
-      setConnection,
-    );
-
-    // 2. Realtime Theme subscription
-    const unsubscribeTheme = subscribeToSectorTheme(activeSector, (newTheme) => {
-      if (!queryTheme) setTheme(newTheme);
-    });
-
-    void loadSectorTheme(activeSector).then((slug) => {
-      if (!queryTheme) setTheme(resolveTheme(slug));
-    });
-
-    if (!databaseConfigured) {
-      return () => {
-        unsubscribeTheme();
-        unsubscribeVisual();
-      };
-    }
-
-    // 4. TV Content loading & subscription
-    loadTvContent(activeSector, true)
-      .then((data) => {
-        setContent(data);
-        setConnection("online");
-        setLastSync(new Date());
-      })
-      .catch((err) => {
-        console.error("Erro ao carregar conteúdo da TV:", err);
-        setConnection("offline");
-      });
-
-    const unsubscribeContent = subscribeToTvContent(
-      activeSector,
-      (data) => {
-        setContent(data);
-        setLastSync(new Date());
-      },
-      setConnection,
-      true,
-    );
-
+    const unsubscribe = subscribeCatalogChanges(() => { void reload(); }, true);
+    void reload();
+    // Clock drives schedule boundaries even offline; polling recovers missed/deactivation events.
+    const clock = window.setInterval(() => setNow(Date.now()), 1000);
+    const recovery = window.setInterval(() => { void reload(); }, 30000);
+    const resume = () => { setNow(Date.now()); void reload(); };
+    window.addEventListener('focus', resume);
+    document.addEventListener('visibilitychange', resume);
     return () => {
-      unsubscribeTheme();
-      unsubscribeContent();
-      unsubscribeVisual();
+      disposed = true; unsubscribe(); clearInterval(clock); clearInterval(recovery);
+      window.removeEventListener('focus', resume); document.removeEventListener('visibilitychange', resume);
     };
-  }, [activeSector, queryTheme]);
+  }, [store, sector]);
 
-  return (
-    <main className="standalone">
-      <TvPlayer
-        content={content}
-        mode="tv"
-        connection={connection}
-        lastSync={lastSync}
-        theme={theme}
-        motionConfig={motionConfig}
-      />
-    </main>
-  );
+  const catalog = resolveCatalog(data.snapshot, store, sector, now);
+  const content = useMemo(() => catalog ? catalogToContent(catalog, data.snapshot.items, data.library) : data.legacy,
+    [catalog, data]);
+  const published = data.snapshot.visuals.find(v => v.catalog_id === catalog?.id)?.published_config;
+  const motion = useMemo(() => {
+    const config = cloneMotionConfig(published && Object.keys(published).length ? published : data.visual);
+    if (queryTheme) config.themeSlug = queryTheme;
+    return config;
+  }, [published, data.visual, queryTheme]);
+  return <main className="standalone"><TvPlayer content={content} mode="tv" connection={connection}
+    lastSync={lastSync} theme={resolveTheme(motion.themeSlug)} motionConfig={motion} /></main>;
 }
