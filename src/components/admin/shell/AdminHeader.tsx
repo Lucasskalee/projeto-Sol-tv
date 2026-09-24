@@ -29,10 +29,10 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
         <div className="admin-header-left">
           <div className="admin-header-brand-mobile">
             <img
-              src="/logo-skalee.jpg"
+              src="/logo-skalee.png"
               alt="Skalee TV"
               className="admin-sidebar-logo-img"
-              style={{ width: "32px", height: "32px" }}
+              style={{ width: "32px", height: "32px", objectFit: "contain", background: "transparent" }}
               onError={(e) => {
                 // Fallback if image fails to load
                 (e.currentTarget as HTMLElement).style.display = "none";
