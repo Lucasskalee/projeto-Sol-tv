@@ -9,6 +9,8 @@ import { normalTheme } from "../../../themes/normal";
 import { blackFridayTheme } from "../../../themes/blackFriday";
 
 export interface CatalogPreviewModalProps {
+  contentOverride?: TvContent;
+  motionConfig?: import("../../../motion/types").MotionConfig;
   isOpen: boolean;
   catalogTitle: string;
   sector: string;
@@ -20,6 +22,8 @@ export interface CatalogPreviewModalProps {
 }
 
 export const CatalogPreviewModal: React.FC<CatalogPreviewModalProps> = ({
+  contentOverride,
+  motionConfig,
   isOpen,
   catalogTitle,
   sector,
@@ -184,7 +188,8 @@ export const CatalogPreviewModal: React.FC<CatalogPreviewModalProps> = ({
         ) : (
           <TvPlayer
             key={replayKey}
-            content={unifiedTvContent}
+            content={contentOverride || unifiedTvContent}
+            motionConfig={motionConfig}
             mode="preview"
             connection="online"
             sectorLabel={sectorLabel}

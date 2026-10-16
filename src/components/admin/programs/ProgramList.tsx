@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import type { Catalog } from "../../../catalogs";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Calendar,
   Clock,
@@ -24,6 +25,7 @@ import { ProgramCard } from "./ProgramCard";
 export type ProgramListFilter = "all" | "live" | "scheduled" | "flash" | "draft";
 
 export type ProgramListProps = {
+  catalogs?: Catalog[];
   programs: TvProgram[];
   currentSector: string;
   sectorLabel: string;
@@ -43,6 +45,7 @@ export type ProgramListProps = {
 };
 
 export function ProgramList({
+  catalogs = [],
   programs,
   currentSector,
   sectorLabel,
@@ -63,14 +66,18 @@ export function ProgramList({
   const [activeFilter, setActiveFilter] = useState<ProgramListFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const now = new Date();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const timer = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(timer); }, []);
 
   // Resolve o programa atualmente no ar via motor real resolveActiveProgram()
   const activeResolution = useMemo(() => {
     return resolveActiveProgram(programs, now, { sector: currentSector });
-  }, [programs, currentSector]);
+  }, [programs, currentSector, now]);
 
-  const activeWinner = activeResolution.activeOverride || activeResolution.baseProgram;
+  const activeWinner = programs.some(p => p.catalogId)
+    ? programs.filter(p => p.catalogId && catalogs.some(c => c.id === p.catalogId && c.active) && calculateProgramStatus(p, now) === 'live')
+      .sort((a,b) => (b.priority ?? 50) - (a.priority ?? 50) || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))[0]
+    : activeResolution.activeOverride || activeResolution.baseProgram;
   const isInterleaved = activeResolution.activeOverride?.schedule.overrideMode === "interleave";
 
   // Calcula o status determinístico de cada programação
@@ -84,7 +91,7 @@ export function ProgramList({
         isWinner,
       };
     });
-  }, [programs, activeWinner]);
+  }, [programs, activeWinner, now]);
 
   // Contagens para os filtros rápidos
   const counts = useMemo(() => {

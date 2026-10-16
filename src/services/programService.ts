@@ -24,6 +24,9 @@ import {
 // =============================================================================
 
 export type SolTvProgramRow = {
+  catalog_id?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
   id: string;
   store: string;
   sector: string;
@@ -119,6 +122,7 @@ export function serializeProgram(
       : "draft";
 
   return {
+    ...(program.catalogId !== undefined ? { catalog_id: program.catalogId, starts_at: program.startsAt, ends_at: program.endsAt } : {}),
     id: program.id,
     store: program.store || "Loja 01",
     sector: program.sector || "acougue",
@@ -136,7 +140,7 @@ export function serializeProgram(
       overrideMode: program.schedule.overrideMode || undefined,
       interleaveFrequency: program.schedule.interleaveFrequency || undefined,
     },
-    screens: Array.isArray(program.screens)
+    screens: program.catalogId ? [] : Array.isArray(program.screens)
       ? program.screens.map((scr, idx) => ({
           id: scr.id || `scr-${idx + 1}`,
           kind: scr.kind || "layout",
@@ -262,6 +266,9 @@ export function deserializeProgram(row: unknown): TvProgram | null {
     typeof r.scope_key === "string" ? r.scope_key : getScopeKey(store, sector);
 
   return {
+    catalogId: typeof r.catalog_id === "string" ? r.catalog_id : undefined,
+    startsAt: typeof r.starts_at === "string" ? r.starts_at : undefined,
+    endsAt: typeof r.ends_at === "string" ? r.ends_at : undefined,
     id,
     store,
     sector,
@@ -509,10 +516,17 @@ export function subscribeToPrograms(
         event: "*",
         schema: "public",
         table: "sol_tv_programs",
-        filter: `scope_key=eq.${scopeKey}`,
+        // scope_key is generated and may be absent from logical replication.
       },
       (payload) => {
         try {
+          if (payload.eventType !== 'DELETE') {
+            const incoming = payload.new as { id?: string; store?: string; sector?: string };
+            if (getScopeKey(incoming.store || '', incoming.sector || '') !== scopeKey) {
+              if (incoming.id) callbacks.onDelete?.(incoming.id);
+              return;
+            }
+          }
           if (payload.eventType === "INSERT") {
             const prog = deserializeProgram(payload.new);
             if (prog) {

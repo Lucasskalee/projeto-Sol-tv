@@ -4,6 +4,7 @@ import { SECTORS } from "../../../data";
 
 export interface AdminHeaderProps {
   currentStore?: string;
+  onSelectStore?: (store: string) => void;
   currentSector: string;
   onSelectSector: (sector: string) => void;
   connection: "online" | "syncing" | "offline";
@@ -13,6 +14,7 @@ export interface AdminHeaderProps {
 
 export const AdminHeader: React.FC<AdminHeaderProps> = ({
   currentStore = "Loja 01",
+  onSelectStore,
   currentSector,
   onSelectSector,
   connection,
@@ -45,9 +47,9 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
 
           <div className="admin-header-selectors">
             {/* Store Badge / Selector */}
-            <span className="admin-chip admin-chip-purple" title="Loja selecionada">
-              🏬 {currentStore}
-            </span>
+            <input key={currentStore} className="admin-select-compact" aria-label="Loja selecionada"
+              defaultValue={currentStore} onBlur={e => { const value = e.target.value.trim(); if (value && value !== currentStore) onSelectStore?.(value); }}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} style={{ width: 120 }} />
 
             {/* Sector Selector */}
             <select
@@ -94,7 +96,7 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
 
           {/* Quick Open TV */}
           <a
-            href={`/tv/${currentSector}`}
+            href={`/tv/${currentSector}?store=${encodeURIComponent(currentStore)}`}
             target="_blank"
             rel="noreferrer"
             className="admin-btn-secondary"

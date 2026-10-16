@@ -8,6 +8,7 @@ export interface AdminShellProps {
   activeTab: AdminTab;
   onSelectTab: (tab: AdminTab) => void;
   currentStore?: string;
+  onSelectStore?: (store: string) => void;
   currentSector: string;
   onSelectSector: (sector: string) => void;
   connection: "online" | "syncing" | "offline";
@@ -26,6 +27,7 @@ export const AdminShell: React.FC<AdminShellProps> = ({
   activeTab,
   onSelectTab,
   currentStore = "Loja 01",
+  onSelectStore,
   currentSector,
   onSelectSector,
   connection,
@@ -51,6 +53,7 @@ export const AdminShell: React.FC<AdminShellProps> = ({
           {/* Top Header */}
           <AdminHeader
             currentStore={currentStore}
+            onSelectStore={onSelectStore}
             currentSector={currentSector}
             onSelectSector={onSelectSector}
             connection={connection}

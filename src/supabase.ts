@@ -478,6 +478,7 @@ export async function loadCompositions(
   sector = "acougue",
   activeOnly = false,
   knownOffers?: Offer[],
+  includeCatalogs = false,
 ): Promise<OfferComposition[]> {
   if (!supabase) return loadCachedCompositions(sector);
 
@@ -496,7 +497,8 @@ export async function loadCompositions(
       query = query.eq("active", true);
     }
 
-    const { data: compData, error: compError } = await query;
+    const { data: rawComps, error: compError } = await query;
+    const compData = rawComps?.filter(c => includeCatalogs || !c.catalog_id);
     if (compError) {
       console.error("[SKALEE CAMADAS] erro Supabase ao consultar sol_tv_compositions:", compError);
       if (compError.code === "42P01" || compError.code === "PGRST205") {
@@ -532,7 +534,7 @@ export async function loadCompositions(
       fromDbComposition(c, items, offersMap),
     );
 
-    cacheTvCompositions(sector, compositions);
+    if (!includeCatalogs) cacheTvCompositions(sector, compositions);
     return compositions;
   } catch (err) {
     console.error("[SKALEE CAMADAS] Erro ao carregar composições do Supabase:", err);
@@ -873,11 +875,13 @@ export async function loadVisualConfig(sector = "acougue"): Promise<VisualConfig
   if (!supabase) return cached;
 
   try {
-    const { data, error } = await supabase
-      .from("sol_tv_visual_configs")
-      .select("*")
-      .eq("sector", normalizedSector)
-      .maybeSingle();
+    const columns = 'sector,published_config,published_version,published_at,updated_at';
+    let result = await supabase.from('sol_tv_visual_configs').select(columns)
+      .eq('sector', normalizedSector).is('catalog_id', null).maybeSingle();
+    if (result.error?.code === '42703' || result.error?.code === 'PGRST204') {
+      result = await supabase.from('sol_tv_visual_configs').select(columns).eq('sector', normalizedSector).maybeSingle();
+    }
+    const { data, error } = result;
 
     if (error) {
       if (error.code === "42P01" || error.code === "PGRST205") {
@@ -945,9 +949,9 @@ export async function saveDraftVisualConfig(
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
-      .from("sol_tv_visual_configs")
-      .upsert(payload);
+    let result = await supabase.from("sol_tv_visual_configs").upsert({ ...payload, catalog_id: null }, { onConflict: 'sector,catalog_id' });
+    if (result.error?.code === '42703' || result.error?.code === 'PGRST204') result = await supabase.from("sol_tv_visual_configs").upsert(payload);
+    const { error } = result;
 
     if (error) {
       if (error.code === "42P01" || error.code === "PGRST205") {
@@ -970,11 +974,12 @@ export async function publishVisualConfig(
     throw new Error("Supabase não configurado. A configuração não foi salva no servidor.");
   }
 
-  const { data: currentRow, error: currentError } = await supabase
-    .from("sol_tv_visual_configs")
-    .select("published_version, published_at")
-    .eq("sector", normalizedSector)
-    .maybeSingle();
+  let currentResult = await supabase.from("sol_tv_visual_configs").select("published_version, published_at")
+    .eq("sector", normalizedSector).is('catalog_id', null).maybeSingle();
+  if (currentResult.error?.code === '42703' || currentResult.error?.code === 'PGRST204') {
+    currentResult = await supabase.from("sol_tv_visual_configs").select("published_version, published_at").eq("sector", normalizedSector).maybeSingle();
+  }
+  const { data: currentRow, error: currentError } = currentResult;
 
   if (currentError) throw currentError;
 
@@ -997,11 +1002,10 @@ export async function publishVisualConfig(
     console.log(`[MOTION] Publicando versão ${nextVersion} para ${normalizedSector}`);
   }
 
-  const { data, error } = await supabase
-    .from("sol_tv_visual_configs")
-    .upsert(payload)
-    .select()
-    .single();
+  let result = await supabase.from("sol_tv_visual_configs")
+    .upsert({ ...payload, catalog_id: null }, { onConflict: 'sector,catalog_id' }).select().single();
+  if (result.error?.code === '42703' || result.error?.code === 'PGRST204') result = await supabase.from("sol_tv_visual_configs").upsert(payload).select().single();
+  const { data, error } = result;
 
   if (error) {
     console.error("[MOTION] Falha ao publicar:", error);
@@ -1069,6 +1073,7 @@ export function subscribeToVisualConfig(
         if (import.meta.env.DEV) {
           console.log("[MOTION] Nova publicação recebida:", payload);
         }
+        if ((payload.new as { catalog_id?: string }).catalog_id || (payload.old as { catalog_id?: string }).catalog_id) return;
         const newRecord = payload.new as {
           sector?: string;
           draft_config?: MotionConfig;
@@ -1314,14 +1319,15 @@ export async function uploadMediaFile(
 export async function loadTvContent(
   sector = "acougue",
   activeOnly = false,
+  includeCatalogs = false,
 ): Promise<TvContent> {
   if (!supabase) return loadCachedContent(sector);
   const [offers, media] = await Promise.all([
     loadOffers(sector, false),
     loadMedia(sector, activeOnly).catch(() => []),
   ]);
-  const compositions = await loadCompositions(sector, activeOnly, offers).catch(() => []);
-  cacheTvContent(sector, offers, media, compositions);
+  const compositions = await loadCompositions(sector, activeOnly, offers, includeCatalogs).catch(() => []);
+  if (!includeCatalogs) cacheTvContent(sector, offers, media, compositions);
   return contentFromData({ sector, offers, media, compositions });
 }
 

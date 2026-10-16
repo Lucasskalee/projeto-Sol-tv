@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runHomologationSuite } from "./homologation_4b3";
 
-describe("Etapa 4B.3 — Homologação Operacional", () => {
+describe.skipIf(import.meta.env.VITE_SOL_TV_RUN_REMOTE_HOMOLOGATION !== "1")("Etapa 4B.3 — Homologação Operacional", () => {
   it("executa a matriz completa de homologação operacional em tempo real", async () => {
     const { results, matrix, allPassed } = await runHomologationSuite();
 

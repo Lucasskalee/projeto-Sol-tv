@@ -1,5 +1,9 @@
+import { fetchCatalogs, subscribeCatalogChanges } from "../services/catalogService";
+import type { Catalog } from "../catalogs";
+import { CatalogAgendaPreview } from "../components/admin/programs/CatalogAgendaPreview";
+import { CatalogScheduleEditor } from "../components/admin/programs/CatalogScheduleEditor";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   createNewProgram,
   duplicateProgram,
@@ -80,6 +84,8 @@ const validUrl = (value: string) => {
 
 export default function Admin() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const store = searchParams.get("store")?.trim() || "Loja 01";
   const [sector, setSector] = useState("acougue");
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [showOfferForm, setShowOfferForm] = useState(false);
@@ -91,6 +97,7 @@ export default function Admin() {
   );
 
   const [content, setContent] = useState<TvContent>(() => cachedContent(sector));
+  const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [programs, setPrograms] = useState<TvProgram[]>([]);
   const [programSyncState, setProgramSyncState] = useState<ProgramSyncState>("syncing");
   const [programLastSyncAt, setProgramLastSyncAt] = useState<string | null>(null);
@@ -114,14 +121,22 @@ export default function Admin() {
   const form = useRef<HTMLFormElement>(null);
   const editing = content.offers.some((o) => o.id === draft.id);
 
+  useEffect(() => {
+    let disposed = false;
+    setCatalogs([]);
+    const reload = () => fetchCatalogs(store, sector).then(rows => { if (!disposed) setCatalogs(rows); }).catch(() => {});
+    void reload(); const unsubscribe = subscribeCatalogChanges(() => { void reload(); });
+    return () => { disposed = true; unsubscribe(); };
+  }, [store, sector]);
+
   function handleNewProgram() {
-    const fresh = createNewProgram(sector, "Loja 01");
+    const fresh = createNewProgram(sector, store);
     setConcurrencyConflict(null);
     setEditingProgram(fresh);
   }
 
   function handleNewFlashOffer() {
-    const fresh = createNewProgram(sector, "Loja 01", "flash_offer");
+    const fresh = createNewProgram(sector, store, "flash_offer");
     setConcurrencyConflict(null);
     setEditingProgram(fresh);
   }
@@ -182,6 +197,7 @@ export default function Admin() {
   async function handleSaveProgram(saved: TvProgram) {
     setConcurrencyConflict(null);
     try {
+      if (saved.catalogId && !databaseConfigured) throw new Error('Supabase não configurado.');
       const exists = programs.some((p) => p.id === saved.id);
       if (exists) {
         const updated = await updateProgram(saved, saved.version);
@@ -208,7 +224,7 @@ export default function Admin() {
   async function handleReloadLatestProgram() {
     if (!editingProgram) return;
     try {
-      const remoteList = await fetchPrograms("Loja 01", sector);
+      const remoteList = await fetchPrograms(store, sector);
       const fresh = remoteList.find((p) => p.id === editingProgram.id);
       if (fresh) {
         setEditingProgram(fresh);
@@ -357,7 +373,7 @@ export default function Admin() {
 
     // 1. Bootstrap e subscrição Realtime de programações via IndexedDB e Supabase
     const unsubProgramsPromise = bootstrapPrograms(
-      "Loja 01",
+      store,
       sector,
       (updatedPrograms, syncState) => {
         if (!isProgramMounted) return;
@@ -389,7 +405,7 @@ export default function Admin() {
       setLegacyLocalCount(0);
     }
 
-    if (!databaseConfigured) return;
+    if (!databaseConfigured) return () => { isProgramMounted = false; void unsubProgramsPromise.then(unsub => unsub()); };
 
     void runStorageDiagnostic();
 
@@ -426,7 +442,7 @@ export default function Admin() {
       unsubscribeMotion();
       unsubscribeContent();
     };
-  }, [sector]);
+  }, [sector, store]);
 
   useEffect(() => {
     if (notice) {
@@ -774,7 +790,8 @@ export default function Admin() {
     <AdminShell
       activeTab={activeTab}
       onSelectTab={setActiveTab}
-      currentStore="Loja 01"
+      currentStore={store}
+      onSelectStore={value => { setEditingProgram(null); setSearchParams({ store: value }); }}
       currentSector={sector}
       onSelectSector={setSector}
       connection={connection}
@@ -784,13 +801,13 @@ export default function Admin() {
         programs: programs.length,
         offers: content.offers.length,
         media: content.media.length,
-        catalogs: content.compositions.length,
+        catalogs: catalogs.length,
       }}
     >
       {/* TAB 1: VISÃO GERAL (NOVA HOME) */}
       {activeTab === "overview" && (
         <AdminOverview
-          currentStore="Loja 01"
+          currentStore={store}
           currentSector={sector}
           currentSectorLabel={currentSectorLabel}
           connection={connection}
@@ -811,16 +828,10 @@ export default function Admin() {
       {/* TAB 2: PROGRAMAÇÃO / AGENDA */}
       {activeTab === "programs" &&
         (showSimulator ? (
-          <ProgramSimulator
-            programs={programs}
-            currentSector={sector}
-            sectorLabel={currentSectorLabel}
-            availableOffers={content.offers}
-            availableMedia={content.media}
-            onClose={() => setShowSimulator(false)}
-          />
+          <CatalogAgendaPreview store={store} sector={sector} onClose={() => setShowSimulator(false)} />
         ) : (
           <ProgramList
+            catalogs={catalogs}
             programs={programs}
             currentSector={sector}
             sectorLabel={currentSectorLabel}
@@ -843,6 +854,8 @@ export default function Admin() {
       {/* TAB 3: CATÁLOGOS / CAMADAS DA TV */}
       {activeTab === "catalogs" && (
         <CompositionManager
+          key={`${store}:${sector}`}
+          store={store}
           sector={sector}
           sectorLabel={currentSectorLabel}
           offers={content.offers}
@@ -926,7 +939,11 @@ export default function Admin() {
       )}
 
       {/* Program Editor Modal */}
-      {editingProgram && (
+      {editingProgram && (editingProgram.catalogId || !editingProgram.screens.length ? (
+        <CatalogScheduleEditor key={editingProgram.id + ':' + editingProgram.version} initialProgram={editingProgram}
+          onSave={handleSaveProgram} onCancel={() => setEditingProgram(null)}
+          concurrencyConflict={concurrencyConflict} onReloadLatest={handleReloadLatestProgram} />
+      ) : (
         <ProgramEditor
           initialProgram={editingProgram}
           existingPrograms={programs}
@@ -946,15 +963,17 @@ export default function Admin() {
             setShowSimulator(true);
           }}
         />
-      )}
+      ))}
 
       {/* Program Tester Modal */}
-      {testingProgram && (
+      {testingProgram && (testingProgram.catalogId ? (
+        <CatalogAgendaPreview store={testingProgram.store} sector={testingProgram.sector} catalogId={testingProgram.catalogId} onClose={() => setTestingProgram(null)} />
+      ) : (
         <ProgramTesterModal
           program={testingProgram}
           onClose={() => setTestingProgram(null)}
         />
-      )}
+      ))}
 
       {/* Toasts */}
       {notice && (
