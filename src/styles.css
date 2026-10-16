@@ -4773,9 +4773,13 @@ details .check {
 }
 
 /* ==============================================================================
-   Slide de Vídeo (Otimizado para Decoder de Smart TV)
+   Slide de Vídeo (Otimizado para Decoder de Smart TV e Supressão de Controles)
    ============================================================================== */
-.video-slide {
+.video-slide.is-video-preparing {
+  background: transparent !important;
+}
+
+.video-slide.is-video-ready {
   animation: video-fade-in 0.35s ease-out forwards;
 }
 
@@ -4792,6 +4796,40 @@ details .check {
   transform: none !important;
   will-change: auto;
 }
+
+/* Supressão definitiva de ícones de Play e controles nativos em WebViews de Smart TV */
+video.tv-clean-video,
+.video-slide video,
+.offer-product video {
+  pointer-events: none;
+  outline: none;
+  border: none;
+}
+
+video.tv-clean-video::-webkit-media-controls,
+video.tv-clean-video::-webkit-media-controls-enclosure,
+video.tv-clean-video::-webkit-media-controls-panel,
+video.tv-clean-video::-webkit-media-controls-overlay-enclosure,
+video.tv-clean-video::-webkit-media-controls-overlay-play-button,
+video.tv-clean-video::-webkit-media-controls-start-playback-button,
+video.tv-clean-video::-webkit-media-controls-play-button,
+video.tv-clean-video::-webkit-media-controls-timeline,
+video.tv-clean-video::-webkit-media-controls-current-time-display,
+video.tv-clean-video::-webkit-media-controls-time-remaining-display,
+video.tv-clean-video::-webkit-media-controls-mute-button,
+video.tv-clean-video::-webkit-media-controls-toggle-closed-captions-button,
+video.tv-clean-video::-webkit-media-controls-fullscreen-button,
+video.tv-clean-video::-internal-media-controls-overlay-cast-button,
+video.tv-clean-video::-internal-media-controls-download-button {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  -webkit-appearance: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 
 /* ==============================================================================
    Acessibilidade: Modo de Movimento Reduzido

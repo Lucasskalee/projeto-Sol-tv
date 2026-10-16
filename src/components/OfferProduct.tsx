@@ -50,6 +50,8 @@ export function ProductImage({
   );
 }
 
+import { TRANSPARENT_VIDEO_POSTER } from "./VideoSlide";
+
 export function VideoPlayer({
   src,
   paused,
@@ -59,33 +61,128 @@ export function VideoPlayer({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState(false);
-  const { url: cachedSrc } = useCachedMedia(src);
-  const effectiveSrc = cachedSrc || src;
+  const [isReady, setIsReady] = useState(false);
+  const { url: cachedSrc, isReady: isCacheResolved } = useCachedMedia(src);
+  const effectiveSrc = isCacheResolved ? cachedSrc || src : "";
 
   useEffect(() => {
     setFailed(false);
+    setIsReady(false);
   }, [effectiveSrc]);
 
   useEffect(() => {
-    if (paused) {
-      ref.current?.pause();
-    } else {
-      ref.current?.play().catch(() => setFailed(true));
-    }
-  }, [paused, effectiveSrc]);
+    const video = ref.current;
+    if (!video || !effectiveSrc) return;
 
-  return failed ? (
-    <div className="media-fallback">Vídeo indisponível</div>
-  ) : (
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.controls = false;
+    video.setAttribute("muted", "");
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    video.setAttribute("x5-playsinline", "");
+    video.setAttribute("disablePictureInPicture", "");
+    video.setAttribute("disableremoteplayback", "");
+    video.removeAttribute("controls");
+  }, [effectiveSrc]);
+
+  useEffect(() => {
+    const video = ref.current;
+    if (!video || !effectiveSrc || failed) return;
+
+    let isCancelled = false;
+
+    const markReady = () => {
+      if (!isCancelled) setIsReady(true);
+    };
+
+    const handleLoadedData = () => {
+      if (paused || !video.paused) markReady();
+    };
+
+    const handleCanPlay = () => {
+      if (paused) {
+        markReady();
+      } else if (video.paused) {
+        const playPromise = video.play();
+        if (playPromise && typeof playPromise.then === "function") {
+          playPromise
+            .then(() => {
+              if (video.readyState >= 2) markReady();
+            })
+            .catch((err: unknown) => {
+              const errName = err instanceof Error ? err.name : String(err);
+              if (errName === "AbortError") return;
+              if (!isCancelled) setFailed(true);
+            });
+        }
+      } else {
+        markReady();
+      }
+    };
+
+    const handlePlaying = () => {
+      if (video.readyState >= 2) markReady();
+    };
+
+    video.addEventListener("loadeddata", handleLoadedData);
+    video.addEventListener("canplay", handleCanPlay);
+    video.addEventListener("playing", handlePlaying);
+
+    if (paused) {
+      video.pause();
+      if (video.readyState >= 2) markReady();
+    } else {
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        playPromise
+          .then(() => {
+            if (video.readyState >= 2) markReady();
+          })
+          .catch((err: unknown) => {
+            const errName = err instanceof Error ? err.name : String(err);
+            if (errName === "AbortError") return;
+            if (!isCancelled) setFailed(true);
+          });
+      }
+    }
+
+    return () => {
+      isCancelled = true;
+      video.removeEventListener("loadeddata", handleLoadedData);
+      video.removeEventListener("canplay", handleCanPlay);
+      video.removeEventListener("playing", handlePlaying);
+      video.pause();
+    };
+  }, [paused, effectiveSrc, failed]);
+
+  if (failed) {
+    return <div className="media-fallback">Vídeo indisponível</div>;
+  }
+
+  if (!effectiveSrc) {
+    return null;
+  }
+
+  return (
     <video
       ref={ref}
       src={effectiveSrc}
-      autoPlay
+      poster={TRANSPARENT_VIDEO_POSTER}
+      autoPlay={!paused}
       muted
       loop
       playsInline
+      controls={false}
+      disablePictureInPicture
+      disableRemotePlayback
       onError={() => setFailed(true)}
-      className="product-media offer-product-image"
+      className={`product-media offer-product-image tv-clean-video ${isReady ? "video-frame-ready" : "video-frame-preparing"}`}
+      style={{
+        opacity: isReady ? 1 : 0,
+        pointerEvents: "none",
+      }}
     />
   );
 }

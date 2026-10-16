@@ -30,7 +30,7 @@ import {
   isFireSparksVisible as resolveFireSparksVisibility,
   shouldRenderBlackFridayImage,
 } from "../motion/defaults";
-import { useCachedMedia, preloadMediaList, pruneMediaCache } from "../mediaCache";
+import { useCachedMedia, preloadMediaList, pruneMediaCache, getCachedMediaUrl } from "../mediaCache";
 
 export type TvPlayerProps = {
   content: TvContent;
@@ -65,8 +65,11 @@ export function TvPlayer({
   const [error, setError] = useState("");
   const [isExiting, setIsExiting] = useState(false);
   const [paintPhase, setPaintPhase] = useState<"idle" | "covering" | "revealing">("idle");
+  const [backdropItem, setBackdropItem] = useState<TvPlaylistItem | null>(null);
+  const [isCurrentVideoReady, setIsCurrentVideoReady] = useState(true);
   const exitTimerRef = useRef<number | null>(null);
   const paintRevealTimerRef = useRef<number | null>(null);
+  const lastActiveItemRef = useRef<TvPlaylistItem | null>(null);
   const shell = useRef<HTMLDivElement>(null);
 
   // Resolve motion configuration (from props or local persistence for preview only)
@@ -139,9 +142,26 @@ export function TvPlayer({
 
   const safeIndex = playlist.length ? index % playlist.length : 0;
   const currentItem = playlist[safeIndex];
+  const nextItem = playlist.length > 1 ? playlist[(safeIndex + 1) % playlist.length] : undefined;
   const duration = (currentItem?.duration || 10) * 1000;
   // Check if current slide is a video
   const isVideo = currentItem?.kind === "video" || (layoutOverride as string) === "video";
+
+  // Priority cache warming for the immediate next item in the playlist
+  useEffect(() => {
+    if (!nextItem) return;
+    if (nextItem.kind === "video" || nextItem.kind === "image") {
+      if (nextItem.src) void getCachedMediaUrl(nextItem.src);
+    } else if (nextItem.kind === "offer") {
+      if (nextItem.offer.image) void getCachedMediaUrl(nextItem.offer.image);
+      if (nextItem.offer.video) void getCachedMediaUrl(nextItem.offer.video);
+    } else if (nextItem.kind === "composition") {
+      nextItem.composition.offers.forEach((o) => {
+        if (o.image) void getCachedMediaUrl(o.image);
+        if (o.video) void getCachedMediaUrl(o.video);
+      });
+    }
+  }, [nextItem]);
 
   // Video overlay configuration resolution
   const hasVideoOverlay = Boolean(isVideo && activeMotion?.videoOverlay?.enabled !== false);
@@ -501,7 +521,7 @@ export function TvPlayer({
     };
   }, []);
 
-  // When the active item changes (advance, deleted, inactivated), clean up exit timer and reset elapsed
+  // When the active item changes (advance, deleted, inactivated), clean up exit timer, manage backdrop for video preparation, and reset elapsed
   useEffect(() => {
     if (exitTimerRef.current) {
       window.clearTimeout(exitTimerRef.current);
@@ -509,6 +529,24 @@ export function TvPlayer({
     }
     setElapsed(0);
     setIsExiting(false);
+
+    if (currentItem?.kind === "video") {
+      // Keep the previous non-video slide visible underneath while the video decodes its first frame
+      const prev = lastActiveItemRef.current;
+      if (prev && prev.id !== currentItem.id && prev.kind !== "video") {
+        setBackdropItem(prev);
+      } else {
+        setBackdropItem(null);
+      }
+      setIsCurrentVideoReady(false);
+    } else {
+      setBackdropItem(null);
+      setIsCurrentVideoReady(true);
+    }
+
+    if (currentItem) {
+      lastActiveItemRef.current = currentItem;
+    }
     prevItemIdRef.current = currentItem?.id;
   }, [currentItem?.id]);
 
@@ -655,17 +693,17 @@ export function TvPlayer({
   const { url: cachedLogoSrc } = useCachedMedia(rawLogoSrc);
   const logoImageSrc = cachedLogoSrc || rawLogoSrc;
 
-  function renderSlideContent(item: TvPlaylistItem) {
+  function renderSlideContent(item: TvPlaylistItem, isBackdrop = false) {
     if (item.kind === "composition") {
       const activeCompositionOffers = item.composition.offers.filter((o) => o.active && isEligible(o));
       if (activeCompositionOffers.length === 0) return null;
 
       return (
         <OfferSlide
-          key={`comp-${item.id}`}
+          key={`comp-${item.id}${isBackdrop ? "-backdrop" : ""}`}
           offers={activeCompositionOffers}
           layout={layoutOverride || item.composition.layout || activeMotion?.layout}
-          paused={paused}
+          paused={paused || isBackdrop}
           badgeLabel={activeMotion?.badge.text || effectiveTheme.tokens.badge.label}
           badgeType={activeMotion?.badge.type || "text"}
           badgeImage={activeMotion?.badge.image}
@@ -688,11 +726,11 @@ export function TvPlayer({
     if (item.kind === "offer") {
       return (
         <OfferSlide
-          key={`offer-${item.id}`}
+          key={`offer-${item.id}${isBackdrop ? "-backdrop" : ""}`}
           offer={item.offer}
           offers={eligibleOffers}
           layout={layoutOverride || item.offer.layout || activeMotion?.layout}
-          paused={paused}
+          paused={paused || isBackdrop}
           badgeLabel={activeMotion?.badge.text || effectiveTheme.tokens.badge.label}
           badgeType={activeMotion?.badge.type || "text"}
           badgeImage={activeMotion?.badge.image}
@@ -715,10 +753,10 @@ export function TvPlayer({
     if (item.kind === "image") {
       return (
         <ImageSlide
-          key={`image-${item.id}`}
+          key={`image-${item.id}${isBackdrop ? "-backdrop" : ""}`}
           src={item.src}
           title={item.title}
-          onError={advanceNext}
+          onError={isBackdrop ? undefined : advanceNext}
         />
       );
     }
@@ -731,14 +769,23 @@ export function TvPlayer({
           title={item.title}
           paused={paused}
           mode={mode}
+          loop={playlist.length === 1}
+          onReady={() => {
+            setIsCurrentVideoReady(true);
+            setBackdropItem(null);
+          }}
           onEnded={advanceNext}
-          onError={advanceNext}
+          onError={() => {
+            setIsCurrentVideoReady(true);
+            setBackdropItem(null);
+            advanceNext();
+          }}
         />
       );
     }
 
     if (item.kind === "opening") {
-      return <OpeningSlide key={`opening-${item.id}`} sector={sectorTitle} />;
+      return <OpeningSlide key={`opening-${item.id}${isBackdrop ? "-backdrop" : ""}`} sector={sectorTitle} />;
     }
 
     return null;
@@ -749,6 +796,10 @@ export function TvPlayer({
       ? "right-to-left"
       : (activeMotion?.paintSwipe?.direction || "left-to-right");
   const paintColorMode = activeMotion?.paintSwipe?.colorMode || "dual";
+
+  const showBackdrop = Boolean(
+    isVideo && !isCurrentVideoReady && backdropItem && backdropItem.id !== currentItem?.id,
+  );
 
   if (mode === "tv") {
     return (
@@ -798,10 +849,21 @@ export function TvPlayer({
               <div className="tv-sunburst-glow" />
             </div>
           )}
+          {showBackdrop && backdropItem && (
+            <div
+              key={`backdrop-${backdropItem.id}`}
+              className="tv-screen-content tv-video-prep-backdrop"
+              aria-hidden="true"
+              style={{ position: "absolute", inset: 0, zIndex: 1 }}
+            >
+              {renderSlideContent(backdropItem, true)}
+            </div>
+          )}
           {currentItem ? (
             <div
               key={currentItem.id}
               className={`tv-screen-content ${getTransitionClasses(activeTransitionPreset, isExiting, currentExitPreset)} ${paintPhase === "revealing" ? "slide-enter-paint-swipe" : ""}`}
+              style={showBackdrop ? { position: "relative", zIndex: 2 } : undefined}
             >
               {renderSlideContent(currentItem)}
 
@@ -958,10 +1020,21 @@ export function TvPlayer({
               <div className="tv-sunburst-glow" />
             </div>
           )}
+          {showBackdrop && backdropItem && (
+            <div
+              key={`backdrop-${backdropItem.id}`}
+              className="tv-screen-content tv-video-prep-backdrop"
+              aria-hidden="true"
+              style={{ position: "absolute", inset: 0, zIndex: 1 }}
+            >
+              {renderSlideContent(backdropItem, true)}
+            </div>
+          )}
           {currentItem ? (
             <div
               key={currentItem.id}
               className={`tv-screen-content ${getTransitionClasses(activeTransitionPreset, isExiting, currentExitPreset)} ${paintPhase === "revealing" ? "slide-enter-paint-swipe" : ""}`}
+              style={showBackdrop ? { position: "relative", zIndex: 2 } : undefined}
             >
               {renderSlideContent(currentItem)}
 
@@ -1053,4 +1126,5 @@ export function TvPlayer({
     </div>
   );
 }
+
 
