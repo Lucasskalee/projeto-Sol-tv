@@ -98,9 +98,9 @@ export default function Login() {
       <div className="login-card">
         <div className="brand" style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
           <img
-            src="/logo-skalee.jpg"
+            src="/logo-skalee.png"
             alt="Skalee TV"
-            style={{ width: "44px", height: "44px", borderRadius: "10px", objectFit: "cover", boxShadow: "0 0 12px rgba(168,85,247,0.3)" }}
+            style={{ width: "44px", height: "44px", objectFit: "contain", background: "transparent" }}
             onError={(e) => {
               (e.currentTarget as HTMLElement).style.display = "none";
             }}

@@ -44,9 +44,10 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
         {/* Brand Header */}
         <div className="admin-sidebar-brand" title="Skalee TV — Painel de Gestão">
           <img
-            src="/logo-skalee.jpg"
+            src="/logo-skalee.png"
             alt="Skalee Logo"
             className="admin-sidebar-logo-img"
+            style={{ objectFit: "contain", background: "transparent" }}
             onError={(e) => {
               (e.currentTarget as HTMLElement).style.display = "none";
             }}
